@@ -4,6 +4,7 @@ export const fr = {
     empty: 'Votre bibliothèque est vide',
     emptyHint: 'Importez votre premier livre (EPUB, MOBI, AZW3, CBZ/CBR) pour commencer',
     add: 'Ajouter des livres',
+    importing: 'Importation {{done}}/{{total}}…',
     search: 'Rechercher',
     sort: {
       recent: 'Récents',

@@ -87,4 +87,31 @@ describe('LibraryScreen', () => {
     expect(await screen.findByText('Import terminé')).toBeOnTheScreen();
     expect(await screen.findByText(/EIO: copy failed/)).toBeOnTheScreen();
   });
+
+  it('shows per-file progress while a multi-file import runs', async () => {
+    const services = await makeServices();
+    const gates = [deferred(), deferred()];
+    let call = 0;
+    mockGetEngine.mockReturnValue({
+      extract: () => (call < gates.length ? gates[call++]!.promise : Promise.reject(new Error('no gate'))),
+    });
+    mockPicker.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///x/A.epub' }, { uri: 'file:///x/B.epub' }] });
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent.press(await screen.findByText('Ajouter des livres'));
+    // nothing reported yet: neither file finished
+    expect(screen.queryByText('Importation 1/2…')).not.toBeOnTheScreen();
+    gates[0]!.resolve({ metadata: { title: 'A', author: null, language: 'en', publisher: null, identifier: 'urn:isbn:1' }, coverJpegBase64: null, cbzBase64: null });
+    expect(await screen.findByText('Importation 1/2…')).toBeOnTheScreen();
+    gates[1]!.resolve({ metadata: { title: 'B', author: null, language: 'en', publisher: null, identifier: 'urn:isbn:2' }, coverJpegBase64: null, cbzBase64: null });
+    expect(await screen.findByText('Import terminé')).toBeOnTheScreen();
+    expect(screen.queryByText('Importation 1/2…')).not.toBeOnTheScreen();
+  });
 });
+
+// extraction gates: the test holds the second file's extraction open so the
+// 1/2 banner state is observable deterministically
+function deferred() {
+  let resolve!: (v: unknown) => void;
+  const promise = new Promise<unknown>((r) => { resolve = r; });
+  return { promise, resolve };
+}

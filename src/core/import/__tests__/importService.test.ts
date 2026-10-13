@@ -124,3 +124,29 @@ describe('runImport', () => {
     expect(createBook.mock.calls[0]![0].fileSize).toBe(4);
   });
 });
+
+describe('runImport progress', () => {
+  it('reports done/total after each file', async () => {
+    const fs = makeFs();
+    const onProgress = jest.fn();
+    await runImport(
+      ['file:///x/A.epub', 'file:///x/B.epub', 'file:///x/C.epub'],
+      baseDeps(fs, { onProgress }),
+    );
+    expect(onProgress).toHaveBeenCalledTimes(3);
+    expect(onProgress).toHaveBeenNthCalledWith(1, { done: 1, total: 3, uri: 'file:///x/A.epub' });
+    expect(onProgress).toHaveBeenNthCalledWith(2, { done: 2, total: 3, uri: 'file:///x/B.epub' });
+    expect(onProgress).toHaveBeenNthCalledWith(3, { done: 3, total: 3, uri: 'file:///x/C.epub' });
+  });
+
+  it('reports progress for failed files too', async () => {
+    const fs = makeFs();
+    const onProgress = jest.fn();
+    await runImport(
+      ['file:///x/NotSupported.pdf', 'file:///x/B.epub'],
+      baseDeps(fs, { onProgress }),
+    );
+    expect(onProgress).toHaveBeenCalledTimes(2);
+    expect(onProgress).toHaveBeenNthCalledWith(1, { done: 1, total: 2, uri: 'file:///x/NotSupported.pdf' });
+  });
+});
