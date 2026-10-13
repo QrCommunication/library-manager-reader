@@ -30,6 +30,7 @@ export interface BridgeLike {
   onSearchDone(cb: (count: number) => void): () => void;
   onTtsSentence(cb: (s: TtsSentencePayload) => void): () => void;
   onChromeToggle(cb: () => void): () => void;
+  onOpenSettings(cb: () => void): () => void;
 }
 
 export interface ReaderSessionDeps {

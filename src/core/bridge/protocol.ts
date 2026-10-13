@@ -45,11 +45,14 @@ export type EngineToApp =
   // v1.x additive: page taps moved INTO the engine document (RN tap zones
   // blocked native text selection); a middle-zone tap asks the app to toggle
   // the reader chrome
-  | { type: 'chromeToggle' };
+  | { type: 'chromeToggle' }
+  // v1.x additive: top-center strip tap — opens the reading settings directly
+  // (immersive mode has no visible chrome to reach them)
+  | { type: 'openSettings' };
 
 export const ENGINE_TO_APP_TYPES: readonly EngineToApp['type'][] = [
   'engineReady', 'dataAck', 'bookLoaded', 'progress', 'bookmarkCaptured', 'extractResult', 'engineError',
-  'selectionChanged', 'searchResult', 'searchDone', 'ttsSentence', 'chromeToggle',
+  'selectionChanged', 'searchResult', 'searchDone', 'ttsSentence', 'chromeToggle', 'openSettings',
 ];
 
 export const APP_TO_ENGINE_TYPES: readonly AppToEngine['type'][] = [

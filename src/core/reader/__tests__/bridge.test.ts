@@ -113,6 +113,16 @@ describe('v1.x subscriptions and commands', () => {
     expect(toggles).toBe(1);
   });
 
+  it('notifies open-settings subscribers until unsubscribed', () => {
+    const { bridge } = makeBridge();
+    let opens = 0;
+    const off = bridge.onOpenSettings(() => { opens += 1; });
+    bridge.handleRaw(JSON.stringify({ type: 'openSettings' }));
+    off();
+    bridge.handleRaw(JSON.stringify({ type: 'openSettings' }));
+    expect(opens).toBe(1);
+  });
+
   it('emits highlight, search and tts commands', () => {
     const { bridge, sent } = makeBridge();
     bridge.addHighlight('a1', 'cfi-9', 'green');

@@ -284,7 +284,11 @@ view.addEventListener('load', (e: Event) => {
       const target = e.target as Element | null;
       if (target && typeof target.closest === 'function' && target.closest('a')) return;
       const x = e.clientX / (doc.documentElement.clientWidth || 1);
-      if (x < 0.33) void view.prev();
+      // top-center strip: with the chrome hidden there is no visible way to
+      // reach the settings, so this tap zone opens them directly
+      const y = e.clientY / (doc.documentElement.clientHeight || 1);
+      if (x >= 0.33 && x <= 0.67 && y < 0.15) send({ type: 'openSettings' });
+      else if (x < 0.33) void view.prev();
       else if (x > 0.67) void view.next();
       else send({ type: 'chromeToggle' });
     });
