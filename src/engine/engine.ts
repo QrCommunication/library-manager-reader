@@ -9,7 +9,7 @@ import { fractionForSection } from './searchFraction';
 import { ssmlToText } from './ssml';
 import { createExtractorFromData } from 'node-unrar-js';
 import { zipSync, strToU8 } from 'fflate';
-import type { HighlightColor, OriginalFormat, ReaderSettings, TocItem } from '../core/types';
+import type { BookFormat, HighlightColor, OriginalFormat, ReaderSettings, TocItem } from '../core/types';
 
 declare const __LITERATA_B64__: string;
 declare const __UNRAR_WASM_B64__: string;
@@ -314,6 +314,13 @@ let settings: ReaderSettings = {
 
 let assembler: ReturnType<typeof createChunkAssembler> | null = null;
 let pendingExtract: { requestId: string; format: OriginalFormat } | null = null;
+let openFormat: BookFormat = 'epub';
+
+// foliate's makeBook sniffs the format from file.name (isCBZ/isFB2 call
+// name.endsWith), so a nameless Blob crashes on every zip-based book
+// (EPUB/CBZ) — open payloads must be Files carrying a truthful extension
+const fileNameFor = (format: OriginalFormat): string =>
+  format === 'cbr' ? 'book.cbz' : `book.${format}`;
 
 async function blobFromBase64(b64: string): Promise<Blob> {
   const bin = atob(b64);
@@ -394,7 +401,7 @@ async function finishExtract(requestId: string, format: OriginalFormat, bytes: U
     await new Promise<void>((resolve, reject) => {
       const once = () => { view.removeEventListener('load', once); resolve(); };
       view.addEventListener('load', once);
-      void view.open(new Blob([openBytes])).catch(reject);
+      void view.open(new File([openBytes], fileNameFor(format))).catch(reject);
     });
     // installed foliate emits 'load' with { doc, index } only; metadata lives on view.book (as read by bookLoaded)
     const book = view.book;
@@ -420,6 +427,7 @@ async function handle(msg: AppToEngine): Promise<void> {
   switch (msg.type) {
     case 'openBook':
       assembler = createChunkAssembler(msg.size);
+      openFormat = msg.format;
       break;
     case 'extract': {
       assembler = createChunkAssembler(msg.size);
@@ -435,7 +443,7 @@ async function handle(msg: AppToEngine): Promise<void> {
           pendingExtract = null;
           void finishExtract(requestId, format, result.bytes);
         } else {
-          try { await view.open(new Blob([result.bytes])); }
+          try { await view.open(new File([result.bytes], fileNameFor(openFormat))); }
           catch (err) { send({ type: 'engineError', code: 'open_failed', message: String(err) }); }
         }
       }
