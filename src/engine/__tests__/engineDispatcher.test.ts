@@ -12,6 +12,8 @@ let bootMessages: EngineMsg[] = [];
 const mockOpened: unknown[] = [];
 const mockLoadListeners: (() => void)[] = [];
 let mockInitCalls = 0;
+// headless extraction must parse via makeBook (pure data), never via the renderer
+const mockMakeBook = jest.fn();
 
 jest.mock('foliate-js/view.js', () => ({
   View: class {
@@ -36,6 +38,7 @@ jest.mock('foliate-js/view.js', () => ({
     goTo(): void { throw new Error('goTo on unloaded book'); }
     goToFraction(): void { throw new Error('goToFraction on unloaded book'); }
   },
+  makeBook: mockMakeBook,
 }));
 
 // foliate-js ships pure ESM ("type": "module") and sits in jest's
@@ -135,21 +138,15 @@ describe('engine dispatcher error surfacing', () => {
   });
 });
 
-describe('engine opens payloads as named Files (foliate sniffs format from file.name)', () => {
+describe('engine opens visible-reader payloads as named Files (foliate sniffs format from file.name)', () => {
   beforeEach(() => {
     posted = [];
     mockOpened.length = 0;
     mockLoadListeners.length = 0;
     mockInitCalls = 0;
+    mockMakeBook.mockReset();
     // esbuild define absent under jest: provide the base64 global the engine reads
     (globalThis as Record<string, unknown>).__UNRAR_WASM_B64__ = 'QQ==';
-    const { createExtractorFromData } = jest.requireMock('node-unrar-js') as { createExtractorFromData: jest.Mock };
-    createExtractorFromData.mockImplementation(async () => ({
-      getFileList: () => ({ fileHeaders: [{ name: 'p1.jpg' }] }),
-      extract: () => ({
-        files: [{ fileHeader: { name: 'p1.jpg' }, extraction: new Uint8Array([0xff, 0xd8, 0xff]).buffer }],
-      }),
-    }));
   });
 
   it('openBook epub: opens the assembled payload as a File named book.epub', async () => {
@@ -161,27 +158,92 @@ describe('engine opens payloads as named Files (foliate sniffs format from file.
     expect((mockOpened[0] as File).name).toBe('book.epub');
     expect(mockInitCalls).toBe(1);
   });
+});
 
-  it('extract epub: opens a File named book.epub and reports success', async () => {
+describe('engine extracts metadata headlessly via makeBook (never the renderer)', () => {
+  beforeEach(() => {
+    posted = [];
+    mockOpened.length = 0;
+    mockLoadListeners.length = 0;
+    mockInitCalls = 0;
+    mockMakeBook.mockReset();
+    (globalThis as Record<string, unknown>).__UNRAR_WASM_B64__ = 'QQ==';
+    const { createExtractorFromData } = jest.requireMock('node-unrar-js') as { createExtractorFromData: jest.Mock };
+    createExtractorFromData.mockImplementation(async () => ({
+      getFileList: () => ({ fileHeaders: [{ name: 'p1.jpg' }] }),
+      extract: () => ({
+        files: [{ fileHeader: { name: 'p1.jpg' }, extraction: new Uint8Array([0xff, 0xd8, 0xff]).buffer }],
+      }),
+    }));
+  });
+
+  it('extract epub: parses via makeBook with a File named book.epub and normalizes metadata', async () => {
+    mockMakeBook.mockImplementation(async () => ({
+      metadata: {
+        title: 'Titre', author: [{ name: 'Auteure' }], language: ['fr'],
+        publisher: { name: 'Éditeur' }, identifier: { scheme: 'urn', value: 'isbn:1234567890' },
+      },
+    }));
     feed({ type: 'extract', requestId: 'r1', format: 'epub', size: 1 });
     feed({ type: 'data', seq: 0, base64: 'QQ==' });
     await flush();
     const res = posted.find((m) => m.type === 'extractResult');
-    expect(res).toMatchObject({ requestId: 'r1', ok: true });
-    expect(mockOpened[0]).toBeInstanceOf(File);
-    expect((mockOpened[0] as File).name).toBe('book.epub');
-    expect(mockInitCalls).toBe(1);
+    expect(res).toMatchObject({
+      requestId: 'r1', ok: true, cbzBase64: null,
+      // foliate metadata is polymorphic (LanguageMap objects, contributor arrays):
+      // the protocol carries flat strings — sending raw shapes would poison the DB row
+      metadata: { title: 'Titre', author: 'Auteure', language: 'fr', publisher: 'Éditeur', identifier: 'isbn:1234567890', coverJpegBase64: null },
+    });
+    expect(mockMakeBook).toHaveBeenCalledTimes(1);
+    const file = mockMakeBook.mock.calls[0][0] as File;
+    expect(file).toBeInstanceOf(File);
+    expect(file.name).toBe('book.epub');
+    // on device the old path drove a full render in the 1×1 hidden WebView; the
+    // first render never completed there and every import died in the 60s timeout
+    expect(mockOpened).toHaveLength(0);
+    expect(mockInitCalls).toBe(0);
   });
 
-  it('extract cbr: opens the converted archive as a File named book.cbz', async () => {
+  it('extract cbr: converts to cbz and hands makeBook a File named book.cbz', async () => {
+    mockMakeBook.mockImplementation(async () => ({ metadata: {} }));
     feed({ type: 'extract', requestId: 'r2', format: 'cbr', size: 1 });
     feed({ type: 'data', seq: 0, base64: 'QQ==' });
     await flush();
     const res = posted.find((m) => m.type === 'extractResult') as { ok?: boolean; cbzBase64?: string | null };
     expect(res?.ok).toBe(true);
     expect(typeof res?.cbzBase64).toBe('string');
-    expect(mockOpened[0]).toBeInstanceOf(File);
-    expect((mockOpened[0] as File).name).toBe('book.cbz');
-    expect(mockInitCalls).toBe(1);
+    const file = mockMakeBook.mock.calls[0][0] as File;
+    expect(file).toBeInstanceOf(File);
+    expect(file.name).toBe('book.cbz');
+    expect(mockOpened).toHaveLength(0);
+  });
+
+  it('extract reports parse failures as ok:false without swallowing into a hang', async () => {
+    mockMakeBook.mockRejectedValue(new Error('unsupported magic'));
+    feed({ type: 'extract', requestId: 'r4', format: 'epub', size: 1 });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    const res = posted.find((m) => m.type === 'extractResult');
+    expect(res).toMatchObject({ requestId: 'r4', ok: false });
+    expect(String((res as { error?: string }).error)).toMatch(/unsupported magic/);
+    // the failure is the extractResult itself — no duplicate engineError noise
+    expect(engineErrors()).toHaveLength(0);
+  });
+
+  it('watchdog: a stalled extraction answers ok:false naming the stage, before the app 60s timeout', async () => {
+    jest.useFakeTimers();
+    try {
+      mockMakeBook.mockImplementation(() => new Promise(() => { /* never settles */ }));
+      feed({ type: 'extract', requestId: 'r5', format: 'epub', size: 1 });
+      feed({ type: 'data', seq: 0, base64: 'QQ==' });
+      await jest.advanceTimersByTimeAsync(44_000);
+      expect(posted.find((m) => m.type === 'extractResult')).toBeUndefined();
+      await jest.advanceTimersByTimeAsync(1_500);
+      const res = posted.find((m) => m.type === 'extractResult') as { ok?: boolean; error?: string } | undefined;
+      expect(res?.ok).toBe(false);
+      expect(String(res?.error)).toMatch(/makeBook/);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

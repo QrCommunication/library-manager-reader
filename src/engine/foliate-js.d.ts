@@ -1,6 +1,15 @@
 // Minimal ambient declaration for the plain-JS foliate-js View (node_modules/foliate-js/view.js).
 // Declares only the members the engine actually uses; `addEventListener`/`append` come from HTMLElement.
 declare module 'foliate-js/view.js' {
+  // foliate's parsed book: polymorphic metadata (LanguageMap strings, contributor
+  // objects/arrays) typed loosely on purpose — the engine normalizes to flat strings
+  export interface FoliateBook {
+    metadata?: Record<string, unknown>;
+    toc?: unknown;
+    getCover?: () => Promise<Blob | null>;
+  }
+  // pure parsing (zip/mobi/fb2) — no renderer, safe for headless extraction
+  export function makeBook(file: Blob): Promise<FoliateBook>;
   export class View extends HTMLElement {
     constructor();
     open(book: Blob): Promise<void>;
@@ -20,16 +29,7 @@ declare module 'foliate-js/view.js' {
       unknown
     >;
     tts?: unknown;
-    book?: {
-      toc?: unknown;
-      metadata?: {
-        title?: string;
-        author?: string;
-        language?: string;
-        publisher?: string;
-        identifier?: string;
-      };
-    };
+    book?: FoliateBook;
     renderer: {
       next(): Promise<void>;
       prev(): Promise<void>;

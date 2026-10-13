@@ -1,5 +1,5 @@
 import { PROTOCOL_VERSION, type AppToEngine, type EngineToApp } from '../core/bridge/protocol';
-import { View } from 'foliate-js/view.js';
+import { View, makeBook, type FoliateBook } from 'foliate-js/view.js';
 import { Overlayer } from 'foliate-js/overlayer.js';
 import { TTS } from 'foliate-js/tts.js';
 import { textWalker } from 'foliate-js/text-walker.js';
@@ -9,7 +9,7 @@ import { fractionForSection } from './searchFraction';
 import { ssmlToText } from './ssml';
 import { createExtractorFromData } from 'node-unrar-js';
 import { zipSync, strToU8 } from 'fflate';
-import type { BookFormat, HighlightColor, OriginalFormat, ReaderSettings, TocItem } from '../core/types';
+import type { BookFormat, BookMetadata, HighlightColor, OriginalFormat, ReaderSettings, TocItem } from '../core/types';
 
 declare const __LITERATA_B64__: string;
 declare const __UNRAR_WASM_B64__: string;
@@ -211,7 +211,7 @@ view.addEventListener('load', (e: Event) => {
   ttsRange = null;
   // installed foliate View emits 'load' with { doc, index }; toc/metadata live on view.book
   const detail = (e as CustomEvent).detail as { doc?: Document; index?: number } | undefined;
-  bookLanguage = view.book?.metadata?.language ?? null;
+  bookLanguage = flatString(view.book?.metadata?.language);
   if (detail?.doc) {
     const doc = detail.doc;
     const index = detail.index ?? 0;
@@ -244,11 +244,7 @@ view.addEventListener('load', (e: Event) => {
   send({
     type: 'bookLoaded',
     toc: toToc(book?.toc),
-    metadata: {
-      title: book?.metadata?.title ?? null, author: book?.metadata?.author ?? null,
-      language: book?.metadata?.language ?? null, publisher: book?.metadata?.publisher ?? null,
-      identifier: book?.metadata?.identifier ?? null, coverJpegBase64: null,
-    },
+    metadata: { ...normalizeMetadata(book?.metadata), coverJpegBase64: null },
   });
 });
 
@@ -356,16 +352,22 @@ async function imagesFromRar(data: Uint8Array): Promise<{ name: string; data: Ui
   return out;
 }
 
-async function coverToJpegBase64(): Promise<string | null> {
+async function coverToJpegBase64(book: FoliateBook | undefined): Promise<string | null> {
   try {
     // real foliate cover API: book.getCover() returns a Blob (reader.js wraps it via URL.createObjectURL)
-    const book = view.book as unknown as { getCover?: () => Promise<Blob | null> } | undefined;
     const blob = await book?.getCover?.();
     if (!blob) return null;
     const coverUrl = URL.createObjectURL(blob);
     try {
       const img = new Image();
-      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = coverUrl; });
+      // a blob decode can stall forever inside a hidden WebView: bound it —
+      // a missing cover must degrade to null, never hang the extraction
+      await new Promise((res, rej) => {
+        const timer = setTimeout(() => rej(new Error('cover image load timeout')), 4_000);
+        img.onload = () => { clearTimeout(timer); res(null); };
+        img.onerror = () => { clearTimeout(timer); rej(new Error('cover image decode failed')); };
+        img.src = coverUrl;
+      });
       const canvas = document.createElement('canvas');
       const scale = Math.min(1, 512 / Math.max(img.width, img.height));
       canvas.width = Math.round(img.width * scale);
@@ -389,7 +391,53 @@ async function btoaBytes(bytes: Uint8Array): Promise<string> {
   return btoa(out);
 }
 
+// foliate metadata is polymorphic: makeLanguageMap yields string | { [lang]: string },
+// author/publisher are contributor objects ({ name }) or arrays of them, identifier
+// may be { scheme, value }. The protocol carries flat strings — forwarding raw
+// shapes would poison the DB row (arrays/objects bound as TEXT)
+const flatString = (v: unknown): string | null => {
+  if (typeof v === 'string') return v === '' ? null : v;
+  if (v && typeof v === 'object') {
+    const rec = v as Record<string, unknown>;
+    if ('value' in rec && typeof rec.value === 'string') return rec.value === '' ? null : rec.value;
+    const first = Object.values(rec).find((x) => typeof x === 'string' && x !== '');
+    return typeof first === 'string' ? first : null;
+  }
+  return null;
+};
+
+const contributorName = (v: unknown): string | null => {
+  if (Array.isArray(v)) return contributorName(v[0]);
+  if (v && typeof v === 'object' && 'name' in (v as Record<string, unknown>)) {
+    return flatString((v as Record<string, unknown>).name);
+  }
+  return flatString(v);
+};
+
+const normalizeMetadata = (m: unknown): BookMetadata => {
+  const meta = (m ?? {}) as Record<string, unknown>;
+  return {
+    title: flatString(meta.title),
+    author: contributorName(meta.author),
+    language: flatString(meta.language),
+    publisher: contributorName(meta.publisher),
+    identifier: flatString(meta.identifier),
+  };
+};
+
+// 45s < the app's own 60s extraction timeout: any stall below answers as a
+// failed extractResult naming the stage, so an import can never spin silently
+const EXTRACT_WATCHDOG_MS = 45_000;
+
 async function finishExtract(requestId: string, format: OriginalFormat, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
+  let stage = 'assemble';
+  let answered = false;
+  const watchdog = setTimeout(() => {
+    if (!answered) {
+      answered = true;
+      send({ type: 'extractResult', requestId, ok: false, error: `extraction stalled (stage: ${stage})` });
+    }
+  }, EXTRACT_WATCHDOG_MS);
   try {
     // Uint8Array<ArrayBuffer>: both sources (assembler output, zipSync output) are ArrayBuffer-backed;
     // required for BlobPart under TS 6 lib.dom strictness
@@ -397,39 +445,35 @@ async function finishExtract(requestId: string, format: OriginalFormat, bytes: U
     // convertCbrToCbz takes a sync extractImages; node-unrar-js is async, so resolve the
     // image list first and hand over a sync closure (called exactly once with the rar bytes)
     if (format === 'cbr') {
+      stage = 'unrar';
       const images = await imagesFromRar(bytes);
       openBytes = convertCbrToCbz(bytes, {
         extractImages: () => images,
         zip: (files) => zipSync(Object.fromEntries(files.map((f) => [f.name, f.data])) as Record<string, Uint8Array>, { level: 6 }),
       }) as Uint8Array<ArrayBuffer>;
     }
-    // attach the load listener BEFORE opening so the load event cannot be missed;
-    // foliate's open() only prepares the renderer — init() drives the first
-    // render that actually emits 'load' (without it every open waits forever)
-    await new Promise<void>((resolve, reject) => {
-      const once = () => { view.removeEventListener('load', once); resolve(); };
-      view.addEventListener('load', once);
-      void view.open(new File([openBytes], fileNameFor(format)))
-        .then(() => view.init({}))
-        .catch(reject);
-    });
-    // installed foliate emits 'load' with { doc, index } only; metadata lives on view.book (as read by bookLoaded)
-    const book = view.book;
-    const cover = await coverToJpegBase64();
+    // headless extraction parses WITHOUT the renderer: makeBook is pure zip/mobi
+    // parsing (view.open would drive a full render — and that first render never
+    // completed inside the 1×1 hidden WebView on device, hanging every import
+    // until the app-side 60s timeout with no diagnostic)
+    stage = 'makeBook';
+    const book = await makeBook(new File([openBytes], fileNameFor(format)));
+    stage = 'cover';
+    const cover = await coverToJpegBase64(book);
+    stage = 'encode';
+    const cbzBase64 = format === 'cbr' ? await btoaBytes(openBytes) : null;
+    answered = true;
     send({
-      type: 'extractResult', requestId, ok: true,
-      cbzBase64: format === 'cbr' ? await btoaBytes(openBytes) : null,
-      metadata: {
-        title: book?.metadata?.title ?? null,
-        author: book?.metadata?.author ?? null,
-        language: book?.metadata?.language ?? null,
-        publisher: book?.metadata?.publisher ?? null,
-        identifier: book?.metadata?.identifier ?? null,
-        coverJpegBase64: cover,
-      },
+      type: 'extractResult', requestId, ok: true, cbzBase64,
+      metadata: { ...normalizeMetadata(book.metadata), coverJpegBase64: cover },
     });
   } catch (err) {
-    send({ type: 'extractResult', requestId, ok: false, error: String(err) });
+    if (!answered) {
+      answered = true;
+      send({ type: 'extractResult', requestId, ok: false, error: String(err) });
+    }
+  } finally {
+    clearTimeout(watchdog);
   }
 }
 
