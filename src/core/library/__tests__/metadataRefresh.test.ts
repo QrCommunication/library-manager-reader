@@ -68,6 +68,20 @@ describe('refreshLibraryMetadata', () => {
     expect(onProgress).toHaveBeenNthCalledWith(1, { done: 1, total: 2 });
     expect(onProgress).toHaveBeenNthCalledWith(2, { done: 2, total: 2 });
   });
+
+  it('processes only the given ids when a selection filter is passed', async () => {
+    const { deps, updates, extract } = makeDeps();
+    const onProgress = jest.fn();
+    const out = await refreshLibraryMetadata(deps, onProgress, ['b2']);
+    expect(extract).toHaveBeenCalledTimes(1);
+    // cbr originals read their stored cbz
+    expect(extract).toHaveBeenCalledWith({ path: '/doc/books/b2.cbz', format: 'cbz', size: 9 });
+    expect(updates).toHaveLength(1);
+    expect(updates[0]![0]).toBe('b2');
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ bookId: 'b2', updated: true });
+    expect(onProgress).toHaveBeenLastCalledWith({ done: 1, total: 1 });
+  });
 });
 
 describe('enrichSeriesFromOpenLibrary', () => {

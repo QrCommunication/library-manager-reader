@@ -34,11 +34,13 @@ const storedFormat = (b: Pick<Book, 'format' | 'originalFormat'>): Book['format'
 export async function refreshLibraryMetadata(
   deps: RefreshDeps,
   onProgress?: (p: { done: number; total: number }) => void,
+  ids?: string[],
 ): Promise<RefreshOutcome[]> {
   const books = await deps.books.listBooks({ sort: 'added' });
+  const selected = ids ? books.filter((b) => ids.includes(b.id)) : books;
   const out: RefreshOutcome[] = [];
   let done = 0;
-  for (const b of books) {
+  for (const b of selected) {
     try {
       const extracted = await deps.extractor.extract({
         path: deps.paths.bookPath(b.id, storedFormat(b)),
@@ -51,7 +53,7 @@ export async function refreshLibraryMetadata(
       out.push({ bookId: b.id, title: b.title, updated: false, detail: err instanceof Error ? err.message : String(err) });
     }
     done += 1;
-    onProgress?.({ done, total: books.length });
+    onProgress?.({ done, total: selected.length });
   }
   return out;
 }
