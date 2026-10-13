@@ -4,7 +4,7 @@ import { SettingsScreen } from '../SettingsScreen';
 import { ServicesProvider, type AppServices } from '../../../core/services';
 import { initI18n } from '../../../i18n';
 import { setServices as setUiPrefsServices, useUiPrefsStore } from '../uiPrefsStore';
-import { setServices as setReaderSettingsServices } from '../readerSettingsStore';
+import { setServices as setReaderSettingsServices, useReaderSettingsStore } from '../readerSettingsStore';
 
 // '../../../i18n' from this folder is src/i18n — the module SettingsScreen imports.
 // Only initI18n is mocked (the screen must not switch languages for real in tests);
@@ -54,5 +54,12 @@ describe('SettingsScreen', () => {
     await render(<ServicesProvider value={services}><SettingsScreen /></ServicesProvider>);
     expect(screen.getByText('Stockage')).toBeOnTheScreen();
     expect(await screen.findByText('0 Mo')).toBeOnTheScreen();
+  });
+
+  it('applies a theme choice to the global reader theme too, not only to defaultTheme', async () => {
+    await render(<ServicesProvider value={services}><SettingsScreen /></ServicesProvider>);
+    fireEvent.press(await screen.findByText('Nuit'));
+    expect(useUiPrefsStore.getState().prefs.defaultTheme).toBe('night');
+    expect(useReaderSettingsStore.getState().settings.theme).toBe('night');
   });
 });

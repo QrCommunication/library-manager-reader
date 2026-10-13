@@ -8,6 +8,7 @@ import type { LanguagePref, ThemeName } from '../../core/types';
 import { initI18n } from '../../i18n';
 import { themeTokens } from '../../theme/tokens';
 import { useUiPrefsStore } from './uiPrefsStore';
+import { useReaderSettingsStore } from './readerSettingsStore';
 
 const LANGUAGES: { value: LanguagePref; labelKey: string }[] = [
   { value: 'auto', labelKey: 'settings.language.auto' },
@@ -25,6 +26,7 @@ export function SettingsScreen() {
   const { t, i18n } = useTranslation();
   const services = useServices();
   const { prefs, update } = useUiPrefsStore();
+  const { update: updateReaderSettings } = useReaderSettingsStore();
   const lang = i18n.language === 'fr' ? 'fr' : 'en';
   const [storageBytes, setStorageBytes] = useState<number | null>(null);
 
@@ -72,7 +74,13 @@ export function SettingsScreen() {
             <Pressable
               key={option.value}
               style={[styles.themeChip, active && styles.themeChipOn]}
-              onPress={() => { void update({ defaultTheme: option.value }); }}
+              onPress={() => {
+                // V1 wiring: the default theme IS the (global) reader theme —
+                // both stores are updated so the choice applies immediately.
+                // Known V1 limit: library/settings chrome stays on 'day'.
+                void update({ defaultTheme: option.value });
+                void updateReaderSettings({ theme: option.value });
+              }}
             >
               <Text style={[styles.themeChipText, active && styles.themeChipTextOn]}>{t(option.labelKey)}</Text>
             </Pressable>
