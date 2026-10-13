@@ -10,6 +10,7 @@ import { TocPanel } from './TocPanel';
 import { BookmarksPanel } from './BookmarksPanel';
 import { AnnotationsPanel } from './AnnotationsPanel';
 import { TypographyPanel } from './TypographyPanel';
+import { SearchPanel } from './SearchPanel';
 import { SelectionPopover, type SelectionState } from './SelectionPopover';
 import { DefinitionSheet } from './DefinitionSheet';
 import { useReaderSettingsStore } from '../settings/readerSettingsStore';
@@ -18,7 +19,7 @@ import { uuidV7 } from '../../core/uuid';
 import { themeTokens } from '../../theme/tokens';
 import { useWindowLayout } from '../../ui/windowClasses';
 
-type PanelName = 'toc' | 'bookmarks' | 'typography' | 'annotations';
+type PanelName = 'toc' | 'bookmarks' | 'typography' | 'annotations' | 'search';
 
 export function ReaderScreen({ bookId }: { bookId: string }) {
   const { t } = useTranslation();
@@ -133,6 +134,9 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
               <Pressable hitSlop={8} onPress={() => setPanel('annotations')} accessibilityLabel={t('annotations.title')}>
                 <Text style={styles.barGlyph}>{'✎'}</Text>
               </Pressable>
+              <Pressable hitSlop={8} onPress={() => setPanel('search')} accessibilityLabel={t('search.title')}>
+                <Text style={styles.barGlyph}>{'⌕'}</Text>
+              </Pressable>
             </View>
           </View>
           <View style={styles.bottomBar}>
@@ -159,6 +163,7 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
                   onSettingsChange={(next) => { void update(next); reader.applySettings(next); }}
                 />
               ) : null}
+              {panel === 'search' ? <SearchPanel bridge={reader} onNavigate={navigateFromPanel} /> : null}
             </View>
           </View>
         </Modal>

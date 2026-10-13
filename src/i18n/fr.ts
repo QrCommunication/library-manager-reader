@@ -55,6 +55,13 @@ export const fr = {
     notFound: 'Aucune définition trouvée',
     serviceError: 'Le service de définition a échoué',
   },
+  search: {
+    title: 'Recherche',
+    placeholder: 'Rechercher dans le livre…',
+    searching: 'Recherche…',
+    empty: 'Aucun résultat',
+    results: '{{count}} résultat(s)',
+  },
   annotations: {
     title: 'Surlignages',
     empty: 'Aucun surlignage',

@@ -55,6 +55,13 @@ export const en = {
     notFound: 'No definition found',
     serviceError: 'The definition service failed',
   },
+  search: {
+    title: 'Search',
+    placeholder: 'Search in the book…',
+    searching: 'Searching…',
+    empty: 'No results',
+    results: '{{count}} result(s)',
+  },
   annotations: {
     title: 'Highlights',
     empty: 'No highlights',
