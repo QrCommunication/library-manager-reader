@@ -88,7 +88,14 @@ export class ReaderBridge {
     return done;
   }
 
-  goTo(target: string): void { this.emit({ type: 'goTo', target }); }
+  // Bookmark fallback targets are `fraction:<n>` (engine sends them when no cfi
+  // exists), but the engine only understands goToFraction for those — a raw
+  // goTo('fraction:0.42') would throw silently deep in foliate.
+  goTo(target: string): void {
+    const m = /^fraction:(0?\d(?:\.\d+)?|1(?:\.0+)?)$/.exec(target);
+    if (m) { this.goToFraction(parseFloat(m[1]!)); return; }
+    this.emit({ type: 'goTo', target });
+  }
   goToFraction(fraction: number): void { this.emit({ type: 'goToFraction', fraction }); }
   next(): void { this.emit({ type: 'next' }); }
   prev(): void { this.emit({ type: 'prev' }); }

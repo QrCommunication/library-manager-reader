@@ -11,7 +11,10 @@ export function createChunkAssembler(totalSize: number): AssemblerState {
   return {
     get received() { return received; },
     push(seq, base64) {
-      if (seq !== parts.size && !parts.has(seq)) throw new Error(`out-of-order chunk: expected seq ${parts.size}, got ${seq}`);
+      // duplicates must throw exactly like out-of-order: silently overwriting the
+      // stored part and double-counting `received` would corrupt the assembled book
+      if (parts.has(seq)) throw new Error(`duplicate chunk: seq ${seq}`);
+      if (seq !== parts.size) throw new Error(`out-of-order chunk: expected seq ${parts.size}, got ${seq}`);
       const bin = atob(base64);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);

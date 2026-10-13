@@ -58,4 +58,14 @@ describe('EngineWebView crash recovery', () => {
     expect(onFatal).toHaveBeenCalledTimes(1);
     expect(onReload).toHaveBeenCalledTimes(1);
   });
+
+  it('only allows engine-origin loads through onShouldStartLoadWithRequest', async () => {
+    await render(<EngineWebView bridge={fakeBridge} onReload={onReload} onFatal={onFatal} />);
+    const gate = (mockWebViewProps as { onShouldStartLoadWithRequest: (r: { url: string }) => boolean }).onShouldStartLoadWithRequest;
+    expect(gate({ url: 'about:blank' })).toBe(true);
+    expect(gate({ url: 'data:text/html,<b>x</b>' })).toBe(true);
+    expect(gate({ url: 'blob:https://origin/uuid' })).toBe(true);
+    expect(gate({ url: 'https://evil.example/page' })).toBe(false);
+    expect(gate({ url: 'file:///sdcard/evil.html' })).toBe(false);
+  });
 });

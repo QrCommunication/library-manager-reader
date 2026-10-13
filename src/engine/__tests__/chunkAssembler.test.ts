@@ -14,6 +14,12 @@ describe('chunkAssembler', () => {
     expect(Buffer.from(r2.bytes!)).toEqual(Buffer.from(bytes));
   });
 
+  it('rejects duplicate seq instead of overwriting the part and double-counting', () => {
+    const a = createChunkAssembler(100);
+    a.push(0, toB64(new Uint8Array(50)));
+    expect(() => a.push(0, toB64(new Uint8Array(50)))).toThrow(/duplicate/);
+  });
+
   it('rejects out-of-order chunks', () => {
     const a = createChunkAssembler(100);
     expect(() => a.push(1, toB64(new Uint8Array(50)))).toThrow(/seq/);

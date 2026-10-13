@@ -33,6 +33,11 @@ export function EngineWebView({ bridge, onFatal, onReload }: { bridge: ReaderBri
         onMessage={onMessage}
         onRenderProcessGone={onGone}
         onError={onGone}
+        // only the engine document may load: the html has no base URL (about:blank)
+        // and engine-internal content uses data:/blob: URIs — anything else is a
+        // book link trying to navigate the webview away
+        onShouldStartLoadWithRequest={(request) =>
+          request.url.startsWith('about:') || request.url.startsWith('data:') || request.url.startsWith('blob:')}
         style={{ backgroundColor: 'transparent' }}
       />
     </View>

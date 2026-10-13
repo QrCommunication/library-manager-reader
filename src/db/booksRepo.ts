@@ -48,8 +48,10 @@ export function createBooksRepo(db: DbDriver, newId: () => string) {
       const where = ['deleted_at IS NULL'];
       const params: unknown[] = [];
       if (opts.query) {
-        where.push('(title LIKE ? OR author LIKE ?)');
-        const like = `%${opts.query}%`;
+        // user input is matched literally: % and _ are escaped and the ESCAPE
+        // clause is declared, so "50%" does not match "50X"
+        where.push("(title LIKE ? ESCAPE '\\' OR author LIKE ? ESCAPE '\\')");
+        const like = `%${opts.query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
         params.push(like, like);
       }
       const rows = await db.all<BookRow>(`SELECT * FROM books WHERE ${where.join(' AND ')} ${order}`, params);

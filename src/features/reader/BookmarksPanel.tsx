@@ -24,10 +24,10 @@ export function BookmarksPanel({ bookId, bridge, onNavigate }: {
   }, [bookmarks, bookId]);
 
   useEffect(() => {
-    void (async () => {
-      setItems(await bookmarks.listByBook(bookId));
-    })();
-  }, [bookmarks, bookId]);
+    // async IIFE: keeps the initial load on the same `reload` used by add/remove
+    // without a synchronous setState inside the effect body
+    void (async () => { await reload(); })();
+  }, [reload]);
 
   const add = async () => {
     setAdding(true);

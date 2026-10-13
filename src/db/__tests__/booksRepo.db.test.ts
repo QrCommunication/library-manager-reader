@@ -55,4 +55,16 @@ describe('booksRepo', () => {
     await repo.touchLastRead(b.id, 12345);
     expect((await repo.getBook(b.id))?.lastReadAt).toBe(12345);
   });
+
+  it('treats % and _ in search queries as literals', async () => {
+    const repo = await setup();
+    await repo.createBook(book({ title: '100% done' }));
+    await repo.createBook(book({ title: '100X done' }));
+    await repo.createBook(book({ title: 'a_b' }));
+    await repo.createBook(book({ title: 'abX' }));
+    const pct = await repo.listBooks({ sort: 'title', query: '100%' });
+    expect(pct.map((x) => x.title)).toEqual(['100% done']);
+    const underscore = await repo.listBooks({ sort: 'title', query: 'a_b' });
+    expect(underscore.map((x) => x.title)).toEqual(['a_b']);
+  });
 });

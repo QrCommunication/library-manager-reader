@@ -7,6 +7,7 @@ import { useServices } from '../../core/services';
 import { useBooks, type SortKey } from './useBooks';
 import { runImport } from '../../core/import/importService';
 import { SUPPORTED_MIME } from '../../core/import/mime';
+import { formatBytes } from '../../core/format';
 import type { Book } from '../../core/types';
 import { themeTokens } from '../../theme/tokens';
 import { BookGridItem } from './BookGridItem';
@@ -17,9 +18,11 @@ import { seedIfEmpty } from '../../dev/seed';
 const SORTS: SortKey[] = ['recent', 'added', 'title'];
 
 export function LibraryScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const services = useServices();
   const router = useRouter();
+  // same active-language resolution as SettingsScreen (handles 'auto')
+  const lang = i18n.language === 'fr' ? 'fr' : 'en';
   const [sort, setSort] = useState<SortKey>('recent');
   const [query, setQuery] = useState('');
   const [importing, setImporting] = useState(false);
@@ -34,6 +37,7 @@ export function LibraryScreen() {
     try {
       const results = await runImport(result.assets.map((a) => a.uri), {
         fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine(),
+        untitledTitle: t('library.untitled'),
       });
       setOutcomes(results);
     } catch (err) {
@@ -110,7 +114,7 @@ export function LibraryScreen() {
             <Pressable onPress={() => { const b = menuBook!; setMenuBook(null); router.push(`/book/${b.id}`); }}>
               <Text>{t('library.menu.open')}</Text>
             </Pressable>
-            <Pressable onPress={() => { Alert.alert(t('library.menu.info'), `${menuBook?.title ?? ''}\n${menuBook?.author ?? ''} · ${menuBook?.fileSize} o`); setMenuBook(null); }}>
+            <Pressable onPress={() => { Alert.alert(t('library.menu.info'), `${menuBook?.title ?? ''}\n${menuBook?.author ?? ''} · ${menuBook ? formatBytes(menuBook.fileSize, lang) : ''}`); setMenuBook(null); }}>
               <Text>{t('library.menu.info')}</Text>
             </Pressable>
             <Pressable onPress={() => { const b = menuBook!; setMenuBook(null); Alert.alert(t('common.delete'), b.title, [{ text: t('common.cancel') }, { text: t('common.confirm'), style: 'destructive', onPress: () => void deleteBook(b) }]); }}>

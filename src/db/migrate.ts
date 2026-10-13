@@ -54,7 +54,16 @@ export async function migrate(db: DbDriver): Promise<void> {
   for (let v = current + 1; v <= CURRENT_SCHEMA_VERSION; v++) {
     const sql = MIGRATIONS[v];
     if (!sql) throw new Error(`Missing migration for schema version ${v}`);
-    await db.exec(sql);
-    await db.exec(`PRAGMA user_version = ${v};`);
+    // each step is transactional: a crash or failure mid-script must not leave
+    // partial tables behind with user_version stuck below the applied DDL
+    try {
+      await db.exec('BEGIN');
+      await db.exec(sql);
+      await db.exec(`PRAGMA user_version = ${v};`);
+      await db.exec('COMMIT');
+    } catch (err) {
+      await db.exec('ROLLBACK').catch(() => { /* already rolled back / no tx */ });
+      throw err;
+    }
   }
 }

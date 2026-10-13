@@ -41,4 +41,19 @@ describe('migrate', () => {
     const left = await db.all('SELECT * FROM bookmarks');
     expect(left).toHaveLength(0);
   });
+
+  it('rolls back the whole step when a migration fails midway', async () => {
+    const db = makeDb();
+    // simulate a partial prior run: only bookmarks exists, so migration 1 fails
+    // at CREATE TABLE bookmarks — AFTER books/idx/reading_progress were applied
+    await db.exec('CREATE TABLE bookmarks (id TEXT PRIMARY KEY);');
+    await expect(migrate(db)).rejects.toThrow();
+    const tables = (await db.all<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table'",
+    )).map((r) => r.name);
+    expect(tables).not.toContain('books');
+    expect(tables).not.toContain('reading_progress');
+    const row = await db.get<{ user_version: number }>('PRAGMA user_version');
+    expect(row?.user_version).toBe(0);
+  });
 });

@@ -8,7 +8,13 @@ export function createSettingsRepo(db: DbDriver) {
   const read = async <T>(key: string, fallback: T): Promise<T> => {
     const row = await db.get<{ value: string }>('SELECT value FROM settings WHERE key = ?', [key]);
     if (!row) return fallback;
-    return { ...fallback, ...(JSON.parse(row.value) as object) } as T;
+    try {
+      return { ...fallback, ...(JSON.parse(row.value) as object) } as T;
+    } catch {
+      // a corrupted row must never crash startup: fall back to full defaults
+      // (no partial merge — an unparseable value tells us nothing reliable)
+      return fallback;
+    }
   };
   const write = async (key: string, value: unknown): Promise<void> => {
     await db.run(

@@ -16,6 +16,8 @@ export interface ImportDeps {
   books: BooksRepo;
   extractor: MetadataPort;
   newId?: () => string;
+  /** localized fallback title for books without any title or usable file name (core layer stays i18n-free) */
+  untitledTitle?: string;
 }
 
 const STORED_EXT: Record<Exclude<OriginalFormat, null>, BookFormat> = {
@@ -67,7 +69,7 @@ async function importOne(uri: string, deps: ImportDeps): Promise<ImportOutcome> 
 
     const book = await deps.books.createBook({
       id,
-      title: extracted.metadata.title ?? uri.split('/').pop() ?? 'Untitled',
+      title: extracted.metadata.title ?? uri.split('/').pop() ?? deps.untitledTitle ?? 'Untitled',
       author: extracted.metadata.author,
       format,
       originalFormat: original === 'cbr' ? 'cbr' : null,

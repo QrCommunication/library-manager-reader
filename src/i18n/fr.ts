@@ -15,7 +15,7 @@ export const fr = {
       info: 'Informations',
       delete: 'Supprimer',
     },
-    missingFile: 'Fichier introuvable sur l’appareil',
+    untitled: 'Sans titre',
   },
   common: {
     cancel: 'Annuler',
@@ -60,12 +60,10 @@ export const fr = {
     about: 'À propos',
   },
   import: {
-    importing: 'Import en cours…',
     failed: {
       unsupported: 'Ce format de fichier n’est pas pris en charge',
       no_space: 'Espace de stockage insuffisant',
       parse: 'Impossible de lire ce fichier',
-      cbr: 'La conversion du fichier CBR a échoué',
     },
     results: {
       title: 'Import terminé',

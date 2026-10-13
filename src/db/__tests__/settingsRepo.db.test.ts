@@ -24,4 +24,14 @@ describe('settingsRepo', () => {
     expect((await repo.getReaderSettings()).theme).toBe('night');
     expect(await repo.getUiPrefs()).toEqual({ language: 'fr', defaultTheme: 'sepia' });
   });
+
+  it('returns full defaults when a stored row is corrupted instead of crashing', async () => {
+    const db = createNodeSqliteDriver(new DatabaseSync(':memory:'));
+    await migrate(db);
+    await db.run('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)', ['readerSettings', '{not json', 1]);
+    await db.run('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)', ['uiPrefs', '"notanobject', 1]);
+    const repo = createSettingsRepo(db);
+    expect(await repo.getReaderSettings()).toEqual(DEFAULT_READER_SETTINGS);
+    expect(await repo.getUiPrefs()).toEqual(DEFAULT_UI_PREFS);
+  });
 });

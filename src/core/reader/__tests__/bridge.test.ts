@@ -52,4 +52,20 @@ describe('ReaderBridge', () => {
     expect(() => bridge.handleRaw('garbage')).not.toThrow();
     expect(() => bridge.handleRaw(enc({ type: 'fromTheFuture', x: 1 }))).not.toThrow();
   });
+
+  it('maps fraction: bookmark targets to goToFraction', () => {
+    const outbox: string[] = [];
+    const bridge = new ReaderBridge((raw) => outbox.push(raw), makeTransport([]));
+    bridge.goTo('fraction:0.42');
+    expect(outbox).toHaveLength(1);
+    expect(JSON.parse(outbox[0]!)).toMatchObject({ type: 'goToFraction', fraction: 0.42 });
+  });
+
+  it('keeps cfi targets on goTo unchanged', () => {
+    const outbox: string[] = [];
+    const bridge = new ReaderBridge((raw) => outbox.push(raw), makeTransport([]));
+    bridge.goTo('epubcfi(6/2!/4)');
+    expect(outbox).toHaveLength(1);
+    expect(JSON.parse(outbox[0]!)).toMatchObject({ type: 'goTo', target: 'epubcfi(6/2!/4)' });
+  });
 });

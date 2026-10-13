@@ -15,7 +15,7 @@ export const en = {
       info: 'Info',
       delete: 'Delete',
     },
-    missingFile: 'File missing from device',
+    untitled: 'Untitled',
   },
   common: {
     cancel: 'Cancel',
@@ -60,12 +60,10 @@ export const en = {
     about: 'About',
   },
   import: {
-    importing: 'Importing…',
     failed: {
       unsupported: 'This file format isn’t supported',
       no_space: 'Not enough storage space',
       parse: 'This file couldn’t be read',
-      cbr: 'CBR conversion failed',
     },
     results: {
       title: 'Import complete',

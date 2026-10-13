@@ -11,6 +11,8 @@ let servicesPromise: Promise<AppServices> | null = null;
 
 export function createAppServices(): Promise<AppServices> {
   if (!servicesPromise) {
+    // on failure the memo is reset so the next launch attempt retries instead of
+    // replaying a transient rejection until the process is restarted
     servicesPromise = (async () => {
       const db = createExpoDriver();
       await migrate(db);
@@ -18,7 +20,10 @@ export function createAppServices(): Promise<AppServices> {
       await services.paths.ensureAll();
       await services.books.purgeDeletedBefore(computePurgeCutoff(Date.now()));
       return services;
-    })();
+    })().catch((err: unknown) => {
+      servicesPromise = null;
+      throw err;
+    });
   }
   return servicesPromise;
 }
