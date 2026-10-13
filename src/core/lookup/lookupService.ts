@@ -42,10 +42,11 @@ const decodeEntities = (s: string): string => s.replace(/&(?:nbsp|amp|lt|gt|quot
 const stripTags = (s: string): string => s.replace(/<[A-Za-z!/?][^>]*>/g, '');
 
 const sanitizeHtml = (html: string): string => {
-  // Decode first, then strip; repeat until stable (bounded) so that
-  // multi-encoded payloads like "&amp;lt;i&amp;gt;..." cannot re-form tags.
+  // Decode first, then strip; repeat until stable so that multi-encoded
+  // payloads like "&amp;lt;i&amp;gt;..." cannot re-form tags. Terminates
+  // because every decode and every strip strictly shrinks the string.
   let out = html;
-  for (let i = 0; i < 3; i += 1) {
+  for (;;) {
     const next = stripTags(decodeEntities(out));
     if (next === out) break;
     out = next;
