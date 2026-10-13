@@ -40,7 +40,7 @@ export function SettingsScreen() {
     return () => { cancelled = true; };
   }, [services]);
 
-  const version = Constants.nativeApplicationVersion ?? '—';
+  const version = Constants.expoConfig?.version ?? '—';
 
   return (
     <ScrollView
