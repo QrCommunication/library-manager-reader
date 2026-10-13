@@ -26,7 +26,7 @@ export default function RootLayout() {
   return (
     <ServicesProvider value={services}>
       <HeadlessEngineView />
-      <Stack />
+      <Stack screenOptions={{ headerShown: false }} />
     </ServicesProvider>
   );
 }

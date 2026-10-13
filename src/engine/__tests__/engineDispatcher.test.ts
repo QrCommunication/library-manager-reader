@@ -8,15 +8,27 @@
 type EngineMsg = { type: string; code?: string; message?: string };
 let posted: EngineMsg[] = [];
 let bootMessages: EngineMsg[] = [];
+// open() captures + 'load' listener bookkeeping (mock-prefixed: referenced from the hoisted factory)
+const mockOpened: unknown[] = [];
+const mockLoadListeners: (() => void)[] = [];
 
 jest.mock('foliate-js/view.js', () => ({
   View: class {
     // no renderer pre-open (mirrors real foliate: renderer exists only after open)
     renderer: undefined;
     book = { metadata: { title: 'T', author: null, language: null, publisher: null, identifier: null } };
-    addEventListener(): void { /* tests never fire 'load'/'relocate' */ }
-    removeEventListener(): void {}
-    async open(): Promise<void> {}
+    addEventListener(type: string, fn: () => void): void {
+      if (type === 'load') mockLoadListeners.push(fn);
+    }
+    removeEventListener(type: string, fn: () => void): void {
+      if (type !== 'load') return;
+      const i = mockLoadListeners.indexOf(fn);
+      if (i >= 0) mockLoadListeners.splice(i, 1);
+    }
+    async open(file: unknown): Promise<void> {
+      mockOpened.push(file);
+      for (const fn of [...mockLoadListeners]) fn();
+    }
     goTo(): void { throw new Error('goTo on unloaded book'); }
     goToFraction(): void { throw new Error('goToFraction on unloaded book'); }
   },
@@ -116,5 +128,52 @@ describe('engine dispatcher error surfacing', () => {
     await flush();
     expect(engineErrors()).toHaveLength(0);
     expect(posted.filter((m) => m.type !== 'engineReady')).toHaveLength(0);
+  });
+});
+
+describe('engine opens payloads as named Files (foliate sniffs format from file.name)', () => {
+  beforeEach(() => {
+    posted = [];
+    mockOpened.length = 0;
+    mockLoadListeners.length = 0;
+    // esbuild define absent under jest: provide the base64 global the engine reads
+    (globalThis as Record<string, unknown>).__UNRAR_WASM_B64__ = 'QQ==';
+    const { createExtractorFromData } = jest.requireMock('node-unrar-js') as { createExtractorFromData: jest.Mock };
+    createExtractorFromData.mockImplementation(async () => ({
+      getFileList: () => ({ fileHeaders: [{ name: 'p1.jpg' }] }),
+      extract: () => ({
+        files: [{ fileHeader: { name: 'p1.jpg' }, extraction: new Uint8Array([0xff, 0xd8, 0xff]).buffer }],
+      }),
+    }));
+  });
+
+  it('openBook epub: opens the assembled payload as a File named book.epub', async () => {
+    feed({ type: 'openBook', format: 'epub', size: 1 });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    expect(mockOpened).toHaveLength(1);
+    expect(mockOpened[0]).toBeInstanceOf(File);
+    expect((mockOpened[0] as File).name).toBe('book.epub');
+  });
+
+  it('extract epub: opens a File named book.epub and reports success', async () => {
+    feed({ type: 'extract', requestId: 'r1', format: 'epub', size: 1 });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    const res = posted.find((m) => m.type === 'extractResult');
+    expect(res).toMatchObject({ requestId: 'r1', ok: true });
+    expect(mockOpened[0]).toBeInstanceOf(File);
+    expect((mockOpened[0] as File).name).toBe('book.epub');
+  });
+
+  it('extract cbr: opens the converted archive as a File named book.cbz', async () => {
+    feed({ type: 'extract', requestId: 'r2', format: 'cbr', size: 1 });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    const res = posted.find((m) => m.type === 'extractResult') as { ok?: boolean; cbzBase64?: string | null };
+    expect(res?.ok).toBe(true);
+    expect(typeof res?.cbzBase64).toBe('string');
+    expect(mockOpened[0]).toBeInstanceOf(File);
+    expect((mockOpened[0] as File).name).toBe('book.cbz');
   });
 });
