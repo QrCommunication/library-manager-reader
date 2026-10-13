@@ -64,6 +64,10 @@ const view = new View();
 container.append(view);
 
 let lastFraction = 0;
+// flips true when a book/extract document finished loading; pre-open
+// navigation/settings are sanctioned quiet no-ops (foliate throws on an
+// unloaded book and the app legitimately probes before the chunk stream ends)
+let documentLoaded = false;
 
 const toToc = (items: unknown): TocItem[] =>
   ((items ?? []) as { label?: string; href?: string; subitems?: unknown }[]).map((it) => ({
@@ -96,6 +100,7 @@ const applySettings = (s: ReaderSettings): void => {
 };
 
 view.addEventListener('load', () => {
+  documentLoaded = true;
   // installed foliate View emits 'load' with { doc, index }; toc/metadata live on view.book
   const book = view.book;
   send({
@@ -270,4 +275,21 @@ async function handle(msg: AppToEngine): Promise<void> {
   }
 }
 
-onAppMessage((msg) => { void handle(msg); });
+// Navigation/settings arriving before the document finished loading are
+// sanctioned quiet no-ops (T15/T21): foliate throws on an unloaded book and the
+// app legitimately probes while chunks stream. Anything ELSE that throws is a
+// genuine failure (size/protocol mismatch, null assembler…) and must reach the
+// app as an engineError instead of being swallowed into an invisible hang.
+const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings']);
+
+onAppMessage((msg) => {
+  void (async () => {
+    if (!documentLoaded && QUIET_UNTIL_LOADED.has(msg.type)) return;
+    try {
+      await handle(msg);
+    } catch (err) {
+      console.log('[engine] handler error', err);
+      send({ type: 'engineError', code: 'unknown', message: String(err) });
+    }
+  })();
+});
