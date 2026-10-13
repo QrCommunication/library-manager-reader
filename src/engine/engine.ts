@@ -469,12 +469,21 @@ const contributorName = (v: unknown): string | null => {
 
 const normalizeMetadata = (m: unknown): BookMetadata => {
   const meta = (m ?? {}) as Record<string, unknown>;
+  // series: EPUB3 belongs-to-collection (foliate groups them under
+  // belongsTo.series — array or single object) and calibre legacy meta both
+  // land here as { name, position }; flatString tames the LanguageMap name
+  const belongs = (meta.belongsTo ?? {}) as Record<string, unknown>;
+  const rawSeries = Array.isArray(belongs.series) ? belongs.series[0] : belongs.series;
+  const seriesRec = (rawSeries ?? null) as Record<string, unknown> | null;
+  const pos = Number(seriesRec?.position);
   return {
     title: flatString(meta.title),
     author: contributorName(meta.author),
     language: flatString(meta.language),
     publisher: contributorName(meta.publisher),
     identifier: flatString(meta.identifier),
+    series: seriesRec ? flatString(seriesRec.name) : null,
+    seriesIndex: seriesRec && Number.isFinite(pos) ? pos : null,
   };
 };
 

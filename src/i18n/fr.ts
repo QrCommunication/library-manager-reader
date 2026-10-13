@@ -10,6 +10,7 @@ export const fr = {
       recent: 'Récents',
       added: 'Récemment ajoutés',
       title: 'Titre',
+      series: 'Série',
     },
     menu: {
       open: 'Ouvrir',

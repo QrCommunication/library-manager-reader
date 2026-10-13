@@ -27,6 +27,8 @@ export interface Book {
   fileSize: number;
   language: string | null;
   publisher: string | null;
+  series: string | null;
+  seriesIndex: number | null;
   drmIdentifier: string | null;
   addedAt: number;
   updatedAt: number;
@@ -83,6 +85,8 @@ export interface BookMetadata {
   language: string | null;
   publisher: string | null;
   identifier: string | null;
+  series: string | null;
+  seriesIndex: number | null;
 }
 
 export interface ReaderSettings {

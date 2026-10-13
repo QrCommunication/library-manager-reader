@@ -59,12 +59,47 @@ describe('LibraryScreen', () => {
 
   it('renders books after seeding and deletes via long-press menu', async () => {
     const services = await makeServices();
-    await services.books.createBook({ title: 'Dune', author: 'F. Herbert', format: 'epub', originalFormat: null, fileName: 'd.epub', fileSize: 1, language: null, publisher: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    await services.books.createBook({ title: 'Dune', author: 'F. Herbert', format: 'epub', originalFormat: null, fileName: 'd.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
     await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
     expect(await screen.findByText('Dune')).toBeOnTheScreen();
     fireEvent(await screen.findByText('Dune'), 'longPress');
     fireEvent.press(await screen.findByText('Supprimer'));
     await waitFor(async () => expect(screen.queryByText('Dune')).toBeNull());
+  });
+
+  it('sorts by series with tome order and keeps series-less books last', async () => {
+    const services = await makeServices();
+    const mk = (title: string, series: string | null, index: number | null, addedAt: number) =>
+      services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series, seriesIndex: index, drmIdentifier: null, addedAt, updatedAt: addedAt, deletedAt: null, lastReadAt: null });
+    await mk('Tome 2', 'Fondation', 2, 1);
+    await mk('Tome 1', 'Fondation', 1, 2);
+    await mk('Standalone', null, null, 3);
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    // default sort is 'recent': newest addedAt first
+    expect(gridTitles()).toEqual(['Standalone', 'Tome 1', 'Tome 2']);
+    fireEvent.press(await screen.findByText('Série'));
+    await waitFor(() => expect(gridTitles()).toEqual(['Tome 1', 'Tome 2', 'Standalone']));
+  });
+
+  it('filters the grid through the series chips and toggles back', async () => {
+    const services = await makeServices();
+    const mk = (title: string, series: string | null, index: number | null) =>
+      services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series, seriesIndex: index, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    await mk('Fondation T1', 'Fondation', 1);
+    await mk('Fondation T2', 'Fondation', 2);
+    await mk('Dune', 'Dune', 1);
+    await mk('Standalone', null, null);
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    expect(await screen.findByText('Dune')).toBeOnTheScreen();
+    // chip labels carry a count ("Fondation (2)"), distinct from book titles
+    fireEvent.press(screen.getByText('Fondation (2)'));
+    expect(await screen.findByText('Fondation T1')).toBeOnTheScreen();
+    expect(screen.getByText('Fondation T2')).toBeOnTheScreen();
+    await waitFor(() => expect(screen.queryByText('Dune')).toBeNull());
+    expect(screen.queryByText('Standalone')).toBeNull();
+    fireEvent.press(screen.getByText('Fondation (2)'));
+    expect(await screen.findByText('Dune')).toBeOnTheScreen();
+    await waitFor(() => expect(screen.getByText('Standalone')).toBeOnTheScreen());
   });
 
   it('surfaces a pre-import crash (headless engine) in the results sheet with its detail', async () => {
@@ -114,4 +149,11 @@ function deferred() {
   let resolve!: (v: unknown) => void;
   const promise = new Promise<unknown>((r) => { resolve = r; });
   return { promise, resolve };
+}
+
+// grid order = document order of the unique book-title texts
+function gridTitles(): string[] {
+  return screen
+    .getAllByText(/^(Tome 1|Tome 2|Standalone|Fondation T1|Fondation T2|Dune)$/)
+    .map((el) => String(el.props.children));
 }

@@ -11,7 +11,7 @@ const setup = async () => {
 };
 const book = (over: Partial<Parameters<ReturnType<typeof createBooksRepo>['createBook']>[0]> = {}) => ({
   title: 'Dune', author: 'Frank Herbert', format: 'epub' as const, originalFormat: null,
-  fileName: 'x.epub', fileSize: 100, language: 'en', publisher: null, drmIdentifier: null,
+  fileName: 'x.epub', fileSize: 100, language: 'en', publisher: null, series: null, seriesIndex: null, drmIdentifier: null,
   addedAt: Date.now(), updatedAt: Date.now(), deletedAt: null, lastReadAt: null, ...over,
 });
 
@@ -66,5 +66,42 @@ describe('booksRepo', () => {
     expect(pct.map((x) => x.title)).toEqual(['100% done']);
     const underscore = await repo.listBooks({ sort: 'title', query: 'a_b' });
     expect(underscore.map((x) => x.title)).toEqual(['a_b']);
+  });
+
+  it('persists series name and tome position', async () => {
+    const repo = await setup();
+    const created = await repo.createBook(book({ title: 'Fondation et Empire', series: 'Fondation', seriesIndex: 2 }));
+    const fetched = await repo.getBook(created.id);
+    expect(fetched?.series).toBe('Fondation');
+    expect(fetched?.seriesIndex).toBe(2);
+  });
+
+  it('sorts by series then tome position, series-less books last', async () => {
+    const repo = await setup();
+    const standalone = await repo.createBook(book({ title: 'Standalone', series: null }));
+    const t3 = await repo.createBook(book({ title: 'Tome 3', series: 'Fondation', seriesIndex: 3 }));
+    const t1 = await repo.createBook(book({ title: 'Prélude', series: 'fondation', seriesIndex: 1 }));
+    const t2 = await repo.createBook(book({ title: 'Empire', series: 'Fondation', seriesIndex: 2 }));
+    const solo = await repo.createBook(book({ title: 'Jeux', series: 'Jeux', seriesIndex: null }));
+    const listed = await repo.listBooks({ sort: 'series' });
+    expect(listed.map((x) => x.id)).toEqual([t1.id, t2.id, t3.id, solo.id, standalone.id]);
+    expect(listed[0]!.seriesIndex).toBe(1);
+    const searchIn = await repo.listBooks({ sort: 'series', query: 'empire' });
+    expect(searchIn.map((x) => x.title)).toEqual(['Empire']);
+  });
+
+  it('filters by series and lists distinct series with counts', async () => {
+    const repo = await setup();
+    await repo.createBook(book({ title: 'T1', series: 'Fondation', seriesIndex: 1 }));
+    await repo.createBook(book({ title: 'T2', series: 'Fondation', seriesIndex: 2 }));
+    await repo.createBook(book({ title: 'Dune', series: 'Dune', seriesIndex: 1 }));
+    await repo.createBook(book({ title: 'Standalone', series: null }));
+    const fondation = await repo.listBooks({ sort: 'title', series: 'Fondation' });
+    expect(fondation.map((x) => x.title)).toEqual(['T1', 'T2']);
+    const series = await repo.listSeries();
+    expect(series).toEqual([
+      { name: 'Dune', count: 1 },
+      { name: 'Fondation', count: 2 },
+    ]);
   });
 });
