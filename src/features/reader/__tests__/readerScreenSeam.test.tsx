@@ -12,7 +12,6 @@ import { initI18n } from '../../../i18n';
 
 type SeamOnMessage = (e: { nativeEvent: { data: string } }) => void;
 let mockMounted = 0;
-let mockUnmounted = 0;
 let mockPosted: string[] = [];
 let mockLatestProps: { onMessage: SeamOnMessage } | null = null;
 let mockFailOpen = false;
@@ -30,7 +29,6 @@ jest.mock('react-native-webview', () => {
         mockMounted += 1;
         // engine boot: the page announces itself as soon as it exists
         sendToBridge(props, { type: 'engineReady', protocolVersion: 1 });
-        return () => { mockUnmounted += 1; };
       }, []);
       React.useImperativeHandle(ref, () => ({
         postMessage: (raw: string) => {
@@ -85,7 +83,6 @@ describe('ReaderScreen engine seam', () => {
 
   beforeEach(() => {
     mockMounted = 0;
-    mockUnmounted = 0;
     mockPosted = [];
     mockLatestProps = null;
     mockFailOpen = false;
