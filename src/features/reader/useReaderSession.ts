@@ -81,6 +81,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
     if (!deps) return;
     let offProgress: (() => void) | undefined;
     let lastSave = 0;
+    let latest: { cfi: string | null; fraction: number; sectionIndex: number | null } | null = null;
     void (async () => {
       const book = await deps.getBook(bookId);
       if (!book || !(await deps.fileExists(book.fileName))) {
@@ -91,6 +92,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
       bridgeRef.current = bridge;
       offProgress = bridge.onProgress((p) => {
         const f = Math.min(1, Math.max(0, p.fraction));
+        latest = { cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex };
         setFraction(f);
         if (Date.now() - lastSave > 1000) { lastSave = Date.now(); void deps.saveProgress({ cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex }); void deps.touchLastRead(); }
       });
@@ -106,7 +108,11 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
         if (!cancelled) { setErrorKind('open_failed'); setState('error'); }
       }
     })();
-    return () => { cancelled = true; offProgress?.(); };
+    return () => {
+      cancelled = true;
+      offProgress?.();
+      if (latest) { void deps.saveProgress({ ...latest }); }
+    };
   }, [bookId, nonce, defaultDeps, depsOverride]);
 
   return { state, errorKind, toc, title, fraction, bridge: bridgeRef.current, retry };
