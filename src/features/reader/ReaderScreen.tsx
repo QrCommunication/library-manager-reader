@@ -212,7 +212,7 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
               {panel === 'typography' ? (
                 <TypographyPanel
                   settings={settings}
-                  onSettingsChange={(next) => { void update(next); reader.applySettings(next); }}
+                  onSettingsChange={(next) => { void update(next); reader.applySettings({ ...next, theme: resolveTheme(next.theme, systemScheme) }); }}
                 />
               ) : null}
               {panel === 'search' ? <SearchPanel bridge={reader} onNavigate={navigateFromPanel} /> : null}
