@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View, useColorScheme } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import type { Book } from '../../core/types';
 import { themeTokens } from '../../theme/tokens';
 
-export function BookGridItem({ book, coverUri, onPress, onLongPress }: {
+export function BookGridItem({ book, coverUri, onPress, onLongPress, selectionMode = false, selected = false }: {
   book: Book;
   coverUri: string;
   onPress(): void;
   onLongPress(): void;
+  selectionMode?: boolean;
+  selected?: boolean;
 }) {
   const t = themeTokens(useColorScheme() === 'dark' ? 'night' : 'day');
   const [coverFailed, setCoverFailed] = useState(false);
@@ -34,6 +37,11 @@ export function BookGridItem({ book, coverUri, onPress, onLongPress }: {
             <Text style={s.tomeText}>{`T${book.seriesIndex}`}</Text>
           </View>
         ) : null}
+        {selectionMode ? (
+          <View style={s.checkWrap}>
+            <Ionicons name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={24} color={selected ? '#4C8DFF' : '#FFFFFF'} />
+          </View>
+        ) : null}
       </View>
       <Text numberOfLines={2} style={[s.title, { color: t.foreground }]}>{book.title}</Text>
       {book.author ? <Text numberOfLines={1} style={[s.author, { color: t.muted }]}>{book.author}</Text> : null}
@@ -54,6 +62,7 @@ const s = StyleSheet.create({
     backgroundColor: '#000000B3', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2,
   },
   tomeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
+  checkWrap: { position: 'absolute', top: 6, left: 6 },
   title: { marginTop: 6, fontSize: 14, fontWeight: '600', textAlign: 'center' },
   author: { marginTop: 2, fontSize: 12, textAlign: 'center' },
   series: { marginTop: 1, fontSize: 11, fontStyle: 'italic', textAlign: 'center' },

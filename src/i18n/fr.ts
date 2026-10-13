@@ -20,6 +20,14 @@ export const fr = {
     },
     series: 'Séries',
     seriesEmpty: 'Aucune série détectée',
+    select: 'Sélectionner',
+    selected: '{{count}} sélectionné(s)',
+    deleteSelected: 'Supprimer ({{count}})',
+    exitSelection: 'Quitter la sélection',
+    refreshMeta: 'Mettre à jour les métadonnées',
+    refreshingMeta: 'Mise à jour {{done}}/{{total}}…',
+    refreshDone: 'Métadonnées mises à jour',
+    refreshSummary: '{{updated}} livre(s) mis à jour · {{series}} série(s) complétée(s) · {{failed}} échec(s)',
     untitled: 'Sans titre',
   },
   trash: {
@@ -122,6 +130,7 @@ export const fr = {
       unsupported: 'Ce format de fichier n’est pas pris en charge',
       no_space: 'Espace de stockage insuffisant',
       parse: 'Impossible de lire ce fichier',
+      duplicate: 'Déjà dans la bibliothèque',
     },
     results: {
       title: 'Import terminé',

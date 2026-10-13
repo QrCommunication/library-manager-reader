@@ -20,6 +20,14 @@ export const en = {
     },
     series: 'Series',
     seriesEmpty: 'No series detected',
+    select: 'Select',
+    selected: '{{count}} selected',
+    deleteSelected: 'Delete ({{count}})',
+    exitSelection: 'Exit selection',
+    refreshMeta: 'Update metadata',
+    refreshingMeta: 'Updating {{done}}/{{total}}…',
+    refreshDone: 'Metadata updated',
+    refreshSummary: '{{updated}} book(s) updated · {{series}} series filled · {{failed}} failure(s)',
     untitled: 'Untitled',
   },
   trash: {
@@ -122,6 +130,7 @@ export const en = {
       unsupported: 'This file format isn’t supported',
       no_space: 'Not enough storage space',
       parse: 'This file couldn’t be read',
+      duplicate: 'Already in the library',
     },
     results: {
       title: 'Import complete',

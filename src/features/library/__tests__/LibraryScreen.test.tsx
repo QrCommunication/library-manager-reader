@@ -140,6 +140,59 @@ describe('LibraryScreen', () => {
     expect(await screen.findByText('Aucune série détectée')).toBeOnTheScreen();
   });
 
+  it('deletes several books through selection mode, tombstones only', async () => {
+    const services = await makeServices();
+    const remove = jest.fn(async (_p: string) => {});
+    services.fs.remove = remove;
+    const mk = (title: string) =>
+      services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    const a = await mk('Aaa');
+    const b = await mk('Bbb');
+    const c = await mk('Ccc');
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    // enter selection from the long-press menu
+    fireEvent(await screen.findByText('Aaa'), 'longPress');
+    fireEvent.press(await screen.findByText('Sélectionner'));
+    // taps toggle membership
+    fireEvent.press(await screen.findByText('Bbb'));
+    fireEvent.press(await screen.findByText('Ccc'));
+    fireEvent.press(await screen.findByText('3 sélectionné(s)'));
+    fireEvent.press(await screen.findByText('Supprimer (3)')); // Alert confirm auto-fires
+    await waitFor(async () => {
+      const deleted = await services.books.listDeleted();
+      expect(deleted.map((x: { id: string }) => x.id).sort()).toEqual([a.id, b.id, c.id].sort());
+      expect(screen.queryByText('Aaa')).toBeNull();
+    });
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('exits selection without deleting via the cancel control', async () => {
+    const services = await makeServices();
+    await services.books.createBook({ title: 'Aaa', author: null, format: 'epub', originalFormat: null, fileName: 'a.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent(await screen.findByText('Aaa'), 'longPress');
+    fireEvent.press(await screen.findByText('Sélectionner'));
+    fireEvent.press(await screen.findByLabelText('Quitter la sélection'));
+    expect(await screen.findByText('Aaa')).toBeOnTheScreen();
+    expect(screen.queryByText(/sélectionné/)).toBeNull();
+  });
+
+  it('refreshes every book metadata from its stored file via the header action', async () => {
+    const services = await makeServices();
+    const created = await services.books.createBook({ title: 'Wrong', author: null, format: 'epub', originalFormat: null, fileName: 'w.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    // every book ends up with a series, so the Open Library pass has nothing to fetch
+    mockGetEngine.mockReturnValue({
+      extract: async () => ({ metadata: { title: 'Right', author: 'Auth', language: 'fr', publisher: null, identifier: 'urn:isbn:9', series: 'Fondation', seriesIndex: 7 }, coverJpegBase64: null, cbzBase64: null }),
+    });
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent.press(await screen.findByLabelText('Mettre à jour les métadonnées'));
+    await waitFor(async () => {
+      expect(await services.books.getBook(created.id)).toMatchObject({ title: 'Right', series: 'Fondation', seriesIndex: 7 });
+    });
+    expect(Alert.alert).toHaveBeenCalledWith('Métadonnées mises à jour', expect.stringMatching(/1 livre/));
+    expect(mockGetEngine).toHaveBeenCalled();
+  });
+
   it('surfaces a pre-import crash (headless engine) in the results sheet with its detail', async () => {
     const services = await makeServices();
     mockPicker.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///x/Book.epub' }] });
