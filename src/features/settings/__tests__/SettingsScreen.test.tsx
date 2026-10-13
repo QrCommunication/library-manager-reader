@@ -62,4 +62,10 @@ describe('SettingsScreen', () => {
     expect(useUiPrefsStore.getState().prefs.defaultTheme).toBe('night');
     expect(useReaderSettingsStore.getState().settings.theme).toBe('night');
   });
+
+  it('no longer shows the LibreTranslate inputs (endpoint ships as a built-in default)', async () => {
+    await render(<ServicesProvider value={services}><SettingsScreen /></ServicesProvider>);
+    expect(screen.queryByText('URL LibreTranslate')).toBeNull();
+    expect(screen.queryByText('Clé API LibreTranslate')).toBeNull();
+  });
 });

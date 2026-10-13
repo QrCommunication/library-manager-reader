@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
+import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View, useColorScheme } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -102,33 +102,6 @@ export function SettingsScreen() {
       </View>
 
       <View style={[styles.infoRow, { borderColor: t0.border }]}>
-        <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.libreTranslateUrl')}</Text>
-        <TextInput
-          style={[styles.textInput, { borderColor: t0.border, color: t0.foreground }]}
-          value={prefs.libreTranslateUrl}
-          onChangeText={(v) => { void update({ libreTranslateUrl: v }); }}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          numberOfLines={1}
-          placeholderTextColor={t0.muted}
-        />
-      </View>
-      <View style={[styles.infoRow, { borderColor: t0.border }]}>
-        <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.libreTranslateApiKey')}</Text>
-        <TextInput
-          style={[styles.textInput, { borderColor: t0.border, color: t0.foreground }]}
-          value={prefs.libreTranslateApiKey}
-          onChangeText={(v) => { void update({ libreTranslateApiKey: v }); }}
-          autoCapitalize="none"
-          autoCorrect={false}
-          secureTextEntry
-          numberOfLines={1}
-          placeholderTextColor={t0.muted}
-        />
-      </View>
-
-      <View style={[styles.infoRow, { borderColor: t0.border }]}>
         <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.storage')}</Text>
         <Text style={[styles.infoValue, { color: t0.muted }]}>{storageBytes === null ? null : formatBytes(storageBytes, lang)}</Text>
       </View>
@@ -155,6 +128,4 @@ const styles = StyleSheet.create({
   themeChipText: { fontSize: 14 },
   infoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1 },
   infoValue: { fontSize: 15, fontVariant: ['tabular-nums'] },
-  // flex:1 fills the row next to the label
-  textInput: { flex: 1, marginLeft: 12, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, height: 40 },
 });
