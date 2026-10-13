@@ -27,7 +27,7 @@ export class ReaderBridge {
     this.handle(msg);
   }
 
-  private handle(msg: EngineToApp): void {
+  private handle(msg: AppToEngine | EngineToApp): void {
     switch (msg.type) {
       case 'engineReady':
         this.resolveReady(msg.protocolVersion);

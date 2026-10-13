@@ -1,6 +1,10 @@
 export type BookFormat = 'epub' | 'mobi' | 'azw3' | 'cbz';
 export type OriginalFormat = BookFormat | 'cbr';
 export type ThemeName = 'day' | 'sepia' | 'night';
+
+export type HighlightColor = 'yellow' | 'green' | 'blue' | 'red';
+
+export interface SelectionRect { x: number; y: number; width: number; height: number }
 export type FontFamilyOption = 'serif' | 'sans' | 'literata';
 export type LanguagePref = 'auto' | 'fr' | 'en';
 
@@ -43,6 +47,20 @@ export interface Bookmark {
 }
 
 export type NewBookmark = Omit<Bookmark, 'id' | 'updatedAt' | 'deletedAt'> & { id?: string };
+
+export interface Annotation {
+  id: string;
+  bookId: string;
+  cfi: string;
+  color: HighlightColor;
+  note: string | null;
+  excerpt: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt: number | null;
+}
+
+export type NewAnnotation = Omit<Annotation, 'id' | 'updatedAt' | 'deletedAt'> & { id?: string };
 
 export interface TocItem {
   label: string;
