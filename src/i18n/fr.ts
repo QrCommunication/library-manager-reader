@@ -43,6 +43,15 @@ export const fr = {
     size: 'Taille',
     lineHeight: 'Interligne',
     margins: 'Marges',
+    tts: 'Lecture audio',
+  },
+  tts: {
+    start: 'Lire à voix haute',
+    stop: 'Arrêter la lecture',
+    pause: 'Pause',
+    resume: 'Reprendre',
+    rate: 'Vitesse',
+    follow: 'Suivre la lecture',
   },
   lookup: {
     define: 'Définir',

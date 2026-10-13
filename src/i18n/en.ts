@@ -43,6 +43,15 @@ export const en = {
     size: 'Size',
     lineHeight: 'Line height',
     margins: 'Margins',
+    tts: 'Text-to-speech',
+  },
+  tts: {
+    start: 'Read aloud',
+    stop: 'Stop reading',
+    pause: 'Pause',
+    resume: 'Resume',
+    rate: 'Speed',
+    follow: 'Follow along',
   },
   lookup: {
     define: 'Define',

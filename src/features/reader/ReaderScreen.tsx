@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
+import * as ExpoSpeech from 'expo-speech';
 import { useServices } from '../../core/services';
+import { createExpoSpeechService } from '../../core/speech/speechService';
 import { useReaderSession } from './useReaderSession';
 import { EngineWebView } from './EngineWebView';
 import { ProgressSlider } from './ProgressSlider';
@@ -13,6 +15,7 @@ import { TypographyPanel } from './TypographyPanel';
 import { SearchPanel } from './SearchPanel';
 import { SelectionPopover, type SelectionState } from './SelectionPopover';
 import { DefinitionSheet } from './DefinitionSheet';
+import { TtsBar } from './TtsBar';
 import { useReaderSettingsStore } from '../settings/readerSettingsStore';
 import type { ReaderBridge } from '../../core/reader/bridge';
 import { uuidV7 } from '../../core/uuid';
@@ -20,6 +23,10 @@ import { themeTokens } from '../../theme/tokens';
 import { useWindowLayout } from '../../ui/windowClasses';
 
 type PanelName = 'toc' | 'bookmarks' | 'typography' | 'annotations' | 'search';
+
+// One app-wide instance: expo-speech owns a global utterance queue, and a
+// module-level service keeps a live TTS stream stable across bar re-renders.
+const speechService = createExpoSpeechService(ExpoSpeech);
 
 export function ReaderScreen({ bookId }: { bookId: string }) {
   const { t } = useTranslation();
@@ -35,6 +42,13 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
   const [selection, setSelection] = useState<SelectionState | null>(null);
   const [highlightMode, setHighlightMode] = useState(false);
   const [sheet, setSheet] = useState<{ word: string; lang: string | null; mode: 'define' | 'translate' } | null>(null);
+  const [ttsActive, setTtsActive] = useState(false);
+  const [follow, setFollow] = useState(false);
+  // bumped on every USER navigation: mid-TTS the engine tears its stream down
+  // silently, so TtsBar must treat this as stream end (follow's own goTo never
+  // bumps it)
+  const [navigationKey, setNavigationKey] = useState(0);
+  const noteNavigation = () => setNavigationKey((k) => k + 1);
 
   // The anchored bubble lives only as long as the engine selection does; each
   // new selectionChanged restarts from the plain actions (never a stale color
@@ -104,15 +118,15 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
   }
 
   const reader = bridge as ReaderBridge;
-  const navigateFromPanel = (target: string) => { closePanel(); reader.goTo(target); };
+  const navigateFromPanel = (target: string) => { closePanel(); noteNavigation(); reader.goTo(target); };
 
   return (
     <View style={[styles.root, { backgroundColor: themeTokens(settings.theme).background }]}>
       <EngineWebView bridge={reader} onFatal={retry} onReload={retry} />
       <View style={styles.overlay} pointerEvents="box-none">
-        <Pressable style={styles.zoneSide} pointerEvents="box-only" onPress={() => reader.prev()} />
+        <Pressable style={styles.zoneSide} pointerEvents="box-only" onPress={() => { noteNavigation(); reader.prev(); }} />
         <Pressable style={styles.zoneCenter} pointerEvents="box-only" onPress={() => setChromeVisible((v) => !v)} />
-        <Pressable style={styles.zoneSide} pointerEvents="box-only" onPress={() => reader.next()} />
+        <Pressable style={styles.zoneSide} pointerEvents="box-only" onPress={() => { noteNavigation(); reader.next(); }} />
       </View>
       {chromeVisible ? (
         <>
@@ -137,13 +151,32 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
               <Pressable hitSlop={8} onPress={() => setPanel('search')} accessibilityLabel={t('search.title')}>
                 <Text style={styles.barGlyph}>{'⌕'}</Text>
               </Pressable>
+              <Pressable hitSlop={8} onPress={() => setTtsActive((v) => !v)} accessibilityLabel={t('reader.tts')}>
+                <Text style={styles.barGlyph}>{'♪'}</Text>
+              </Pressable>
             </View>
           </View>
           <View style={styles.bottomBar}>
             <Text style={styles.percent}>{`${Math.round(fraction * 100)} %`}</Text>
-            <ProgressSlider fraction={fraction} onScrub={(f) => reader.goToFraction(f)} />
+            <ProgressSlider fraction={fraction} onScrub={(f) => { noteNavigation(); reader.goToFraction(f); }} />
           </View>
         </>
+      ) : null}
+      {ttsActive ? (
+        <TtsBar
+          bridge={reader}
+          speech={speechService}
+          rate={settings.ttsRate}
+          onRateChange={(r) => { void update({ ttsRate: r }); }}
+          // book language: engine metadata is not surfaced into ReaderScreen
+          // state (brief ruling) — TtsBar falls back to en-US via BCP-47 helper
+          bookLang={null}
+          // brief ruling: start position = current view → ttsStart(null)
+          onStart={() => reader.ttsStart(null)}
+          follow={follow}
+          onFollowChange={setFollow}
+          navigationKey={navigationKey}
+        />
       ) : null}
       {panel ? (
         <Modal transparent visible animationType="slide" onRequestClose={closePanel}>
