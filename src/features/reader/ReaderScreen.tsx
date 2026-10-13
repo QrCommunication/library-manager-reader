@@ -37,7 +37,7 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
   const services = useServices();
   const router = useRouter();
   const { settings, update } = useReaderSettingsStore();
-  const { state, errorKind, title, fraction, toc, bridge, retry } = useReaderSession(bookId);
+  const { state, errorKind, title, language, fraction, toc, bridge, retry } = useReaderSession(bookId);
   const scheme = useColorScheme();
   // react-native reports 'unspecified' when the scheme is undetermined:
   // normalize to null so resolveTheme keeps its light/dark/null signature
@@ -226,9 +226,9 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
             speech={speechService}
             rate={settings.ttsRate}
             onRateChange={(r) => { void update({ ttsRate: r }); }}
-            // book language: engine metadata is not surfaced into ReaderScreen
-            // state (brief ruling) — TtsBar falls back to en-US via BCP-47 helper
-            bookLang={null}
+            // book language from the engine metadata: expo-speech picks a
+            // matching voice (TtsBar maps 'fr' → 'fr-FR' etc., falls back en-US)
+            bookLang={language}
             // brief ruling: start position = current view → ttsStart(null)
             onStart={() => reader.ttsStart(null)}
             follow={follow}

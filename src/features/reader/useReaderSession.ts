@@ -86,6 +86,8 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
   const [errorKind, setErrorKind] = useState<'missing' | 'open_failed'>('open_failed');
   const [toc, setToc] = useState<TocItem[]>([]);
   const [title, setTitle] = useState<string | null>(null);
+  // book language from the engine metadata — drives the TTS voice (TtsBar)
+  const [language, setLanguage] = useState<string | null>(null);
   const [fraction, setFraction] = useState(0);
   // render-visible session state (ReaderScreen gates on it), not a ref
   const [bridge, setBridge] = useState<BridgeLike | null>(null);
@@ -160,7 +162,13 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
         } else if (prog?.cfi) bridge.goTo(prog.cfi);
         else if (prog) bridge.goToFraction(prog.fraction);
         resumed = true;
-        if (!cancelled) { setToc(loaded.toc); setTitle(book.title); setState('ready'); }
+        if (!cancelled) {
+          setToc(loaded.toc);
+          setTitle(book.title);
+          // engine normalizes metadata to BookMetadata (language: string | null)
+          setLanguage((loaded.metadata as { language?: string | null } | null)?.language ?? null);
+          setState('ready');
+        }
       } catch {
         if (!cancelled) { setErrorKind('open_failed'); setState('error'); }
       }
@@ -172,5 +180,5 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
     };
   }, [bookId, nonce, defaultDeps, depsOverride]);
 
-  return { state, errorKind, toc, title, fraction, bridge, retry };
+  return { state, errorKind, toc, title, language, fraction, bridge, retry };
 }
