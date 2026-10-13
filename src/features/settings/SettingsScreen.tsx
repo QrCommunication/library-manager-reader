@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useServices } from '../../core/services';
 import { formatBytes } from '../../core/format';
@@ -31,6 +33,10 @@ export function SettingsScreen() {
   const { prefs, update } = useUiPrefsStore();
   const { update: updateReaderSettings } = useReaderSettingsStore();
   const lang = i18n.language === 'fr' ? 'fr' : 'en';
+  // app chrome follows the system light/dark, same as the library
+  const dark = useColorScheme() === 'dark';
+  const t0 = themeTokens(dark ? 'night' : 'day');
+  const insets = useSafeAreaInsets();
   const [storageBytes, setStorageBytes] = useState<number | null>(null);
 
   useEffect(() => {
@@ -49,23 +55,28 @@ export function SettingsScreen() {
 
   return (
     <ScrollView
-      style={[styles.root, { backgroundColor: themeTokens('day').background }]}
-      contentContainerStyle={[styles.content, styles.contentWide]}
+      style={[styles.root, { backgroundColor: t0.background }]}
+      contentContainerStyle={[styles.content, styles.contentWide, { paddingTop: insets.top + 24 }]}
     >
-      <Text style={styles.title}>{t('settings.title')}</Text>
+      <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
+      <Text style={[styles.title, { color: t0.foreground }]}>{t('settings.title')}</Text>
 
       {LANGUAGES.map((option) => {
         const active = prefs.language === option.value;
         return (
           <Pressable
             key={option.value}
-            style={[styles.row, active && styles.rowActive]}
+            style={[styles.row, { borderColor: t0.border }, active && { backgroundColor: t0.chrome, borderColor: t0.accent }]}
             accessibilityRole="radio"
             accessibilityState={{ selected: active }}
             onPress={() => { void update({ language: option.value }); void initI18n(option.value); }}
           >
-            <Text style={[styles.radioGlyph, active && styles.radioGlyphOn]}>{active ? '◉' : '○'}</Text>
-            <Text style={styles.rowLabel}>{t(option.labelKey)}</Text>
+            <Ionicons
+              name={active ? 'radio-button-on' : 'radio-button-off'}
+              size={18}
+              color={active ? t0.accent : t0.muted}
+            />
+            <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t(option.labelKey)}</Text>
           </Pressable>
         );
       })}
@@ -76,54 +87,55 @@ export function SettingsScreen() {
           return (
             <Pressable
               key={option.value}
-              style={[styles.themeChip, active && styles.themeChipOn]}
+              style={[styles.themeChip, { borderColor: t0.accent }, active && { backgroundColor: t0.accent }]}
               onPress={() => {
-                // V1 wiring: the default theme IS the (global) reader theme —
-                // both stores are updated so the choice applies immediately.
-                // Known V1 limit: library/settings chrome stays on 'day'.
+                // the default theme IS the (global) reader theme — both stores
+                // are updated so the choice applies immediately
                 void update({ defaultTheme: option.value });
                 void updateReaderSettings({ theme: option.value });
               }}
             >
-              <Text style={[styles.themeChipText, active && styles.themeChipTextOn]}>{t(option.labelKey)}</Text>
+              <Text style={[styles.themeChipText, { color: t0.accent }, active && { color: t0.onAccent, fontWeight: '600' }]}>{t(option.labelKey)}</Text>
             </Pressable>
           );
         })}
       </View>
 
-      <View style={styles.infoRow}>
-        <Text style={styles.rowLabel}>{t('settings.libreTranslateUrl')}</Text>
+      <View style={[styles.infoRow, { borderColor: t0.border }]}>
+        <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.libreTranslateUrl')}</Text>
         <TextInput
-          style={styles.textInput}
+          style={[styles.textInput, { borderColor: t0.border, color: t0.foreground }]}
           value={prefs.libreTranslateUrl}
           onChangeText={(v) => { void update({ libreTranslateUrl: v }); }}
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
           numberOfLines={1}
+          placeholderTextColor={t0.muted}
         />
       </View>
-      <View style={styles.infoRow}>
-        <Text style={styles.rowLabel}>{t('settings.libreTranslateApiKey')}</Text>
+      <View style={[styles.infoRow, { borderColor: t0.border }]}>
+        <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.libreTranslateApiKey')}</Text>
         <TextInput
-          style={styles.textInput}
+          style={[styles.textInput, { borderColor: t0.border, color: t0.foreground }]}
           value={prefs.libreTranslateApiKey}
           onChangeText={(v) => { void update({ libreTranslateApiKey: v }); }}
           autoCapitalize="none"
           autoCorrect={false}
           secureTextEntry
           numberOfLines={1}
+          placeholderTextColor={t0.muted}
         />
       </View>
 
-      <View style={styles.infoRow}>
-        <Text style={styles.rowLabel}>{t('settings.storage')}</Text>
-        <Text style={styles.infoValue}>{storageBytes === null ? null : formatBytes(storageBytes, lang)}</Text>
+      <View style={[styles.infoRow, { borderColor: t0.border }]}>
+        <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.storage')}</Text>
+        <Text style={[styles.infoValue, { color: t0.muted }]}>{storageBytes === null ? null : formatBytes(storageBytes, lang)}</Text>
       </View>
 
-      <View style={styles.infoRow}>
-        <Text style={styles.rowLabel}>{t('settings.about')}</Text>
-        <Text style={styles.infoValue}>{version}</Text>
+      <View style={[styles.infoRow, { borderColor: t0.border }]}>
+        <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.about')}</Text>
+        <Text style={[styles.infoValue, { color: t0.muted }]}>{version}</Text>
       </View>
     </ScrollView>
   );
@@ -131,23 +143,18 @@ export function SettingsScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  content: { paddingTop: 48, paddingHorizontal: 12, paddingBottom: 24, gap: 8 },
+  content: { paddingHorizontal: 12, paddingBottom: 24, gap: 8 },
   // centered column on Fold inner display / tablets — form controls keep a
   // comfortable width instead of stretching across a 800+ dp window
   contentWide: { width: '100%', maxWidth: 640, alignSelf: 'center' },
   title: { fontSize: 28, fontWeight: '700', marginBottom: 8 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#CCC' },
-  rowActive: { backgroundColor: '#DCE7FB', borderColor: '#2D6CDF' },
-  radioGlyph: { fontSize: 16, color: '#666' },
-  radioGlyphOn: { color: '#2D6CDF' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1 },
   rowLabel: { fontSize: 15 },
   themeRow: { flexDirection: 'row', gap: 8 },
-  themeChip: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#2D6CDF' },
-  themeChipOn: { backgroundColor: '#2D6CDF' },
-  themeChipText: { fontSize: 14, color: '#2D6CDF' },
-  themeChipTextOn: { color: '#FFF', fontWeight: '600' },
-  infoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#CCC' },
+  themeChip: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
+  themeChipText: { fontSize: 14 },
+  infoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1 },
   infoValue: { fontSize: 15, fontVariant: ['tabular-nums'] },
-  // modeled on LibraryScreen's styles.search; flex:1 fills the row next to the label
-  textInput: { flex: 1, marginLeft: 12, borderWidth: 1, borderColor: '#CCC', borderRadius: 8, paddingHorizontal: 10, height: 40 },
+  // flex:1 fills the row next to the label
+  textInput: { flex: 1, marginLeft: 12, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, height: 40 },
 });

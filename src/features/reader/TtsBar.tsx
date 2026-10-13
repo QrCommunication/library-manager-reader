@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { Ionicons } from '@expo/vector-icons';
 import type { SpeechService } from '../../core/speech/speechService';
+import { useReaderTheme } from '../../theme/context';
 
 // A ttsNext on an already-dead engine stream (mid-TTS navigation, no-op next)
 // is answered by NOTHING — no '' marker is ever sent (Task 14 ruling). After
@@ -44,6 +46,7 @@ export function TtsBar({ bridge, speech, rate, onRateChange, bookLang, currentCf
   navigationKey?: number;
 }) {
   const { t } = useTranslation();
+  const th = useReaderTheme();
   const [status, setStatus] = useState<Status>('idle');
   // Sentence events arrive outside the render loop; refs carry the values the
   // handler needs without re-subscribing (writes happen in effects/handlers).
@@ -114,7 +117,7 @@ export function TtsBar({ bridge, speech, rate, onRateChange, bookLang, currentCf
   useEffect(() => () => { disarm(); speech.stop(); bridge.ttsStop(); }, [bridge, speech, disarm]);
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: th.chrome, borderTopColor: th.border }]}>
       <Pressable
         accessibilityLabel={status === 'playing' ? t('tts.pause') : status === 'paused' ? t('tts.resume') : t('tts.start')}
         onPress={() => {
@@ -125,21 +128,31 @@ export function TtsBar({ bridge, speech, rate, onRateChange, bookLang, currentCf
           onStart();
         }}
       >
-        <Text style={styles.glyph}>{status === 'playing' ? '⏸' : '▶'}</Text>
+        <Ionicons
+          name={status === 'playing' ? 'pause' : 'play'}
+          size={22}
+          color={th.foreground}
+          style={styles.icon}
+        />
       </Pressable>
       <Pressable accessibilityLabel={t('tts.stop')} onPress={endStream}>
-        <Text style={styles.glyph}>{'⏹'}</Text>
+        <Ionicons name="stop" size={22} color={th.foreground} style={styles.icon} />
       </Pressable>
-      <Text style={styles.rateLabel}>{t('tts.rate')}</Text>
+      <Text style={[styles.rateLabel, { color: th.muted }]}>{t('tts.rate')}</Text>
       <Pressable accessibilityLabel="rate-" onPress={() => onRateChange(Math.max(0.5, Math.round((rate - 0.1) * 10) / 10))}>
-        <Text>{'−'}</Text>
+        <Text style={{ color: th.foreground }}>{'−'}</Text>
       </Pressable>
-      <Text style={styles.rateValue}>{`${rate.toFixed(1)}×`}</Text>
+      <Text style={[styles.rateValue, { color: th.foreground }]}>{`${rate.toFixed(1)}×`}</Text>
       <Pressable accessibilityLabel="rate+" onPress={() => onRateChange(Math.min(2, Math.round((rate + 0.1) * 10) / 10))}>
-        <Text>{'+'}</Text>
+        <Text style={{ color: th.foreground }}>{'+'}</Text>
       </Pressable>
       <Pressable accessibilityLabel={t('tts.follow')} onPress={() => onFollowChange(!follow)}>
-        <Text style={[styles.follow, follow && styles.followOn]}>{'⇥'}</Text>
+        <Ionicons
+          name="locate-outline"
+          size={20}
+          color={th.accent}
+          style={[styles.icon, !follow && styles.followOff]}
+        />
       </Pressable>
     </View>
   );
@@ -148,12 +161,12 @@ export function TtsBar({ bridge, speech, rate, onRateChange, bookLang, currentCf
 const styles = StyleSheet.create({
   root: {
     position: 'absolute', bottom: 56, left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'center', gap: 14, padding: 12,
-    backgroundColor: '#FFFFFFEE',
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    padding: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
-  glyph: { fontSize: 20, lineHeight: 24, minWidth: 24, textAlign: 'center' },
+  icon: { minWidth: 24, textAlign: 'center' },
   rateLabel: { fontSize: 13, marginLeft: 'auto' },
   rateValue: { minWidth: 38, textAlign: 'center', fontVariant: ['tabular-nums'] },
-  follow: { fontSize: 18, lineHeight: 22, opacity: 0.35 },
-  followOn: { opacity: 1 },
+  followOff: { opacity: 0.35 },
 });

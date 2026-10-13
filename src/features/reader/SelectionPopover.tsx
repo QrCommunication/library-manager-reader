@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import type { HighlightColor, SelectionRect } from '../../core/types';
+import { useReaderTheme } from '../../theme/context';
 
 export interface SelectionState {
   text: string;
@@ -35,17 +36,18 @@ export function SelectionPopover({ selection, highlightMode = false, onHighlight
   onDismiss(): void;
 }) {
   const { t } = useTranslation();
+  const th = useReaderTheme();
   const screenW = useWindowDimensions().width;
   const POPOVER_WIDTH = 280;
   const left = Math.max(8, Math.min(selection.rect.x, screenW - POPOVER_WIDTH - 8));
   const above = selection.rect.y >= 64;
   const top = above ? selection.rect.y - 56 : selection.rect.y + selection.rect.height + 8;
   return (
-    <View style={[styles.root, { left, top, width: POPOVER_WIDTH }]} testID="selection-popover">
+    <View style={[styles.root, { backgroundColor: th.chrome, left, top, width: POPOVER_WIDTH }]} testID="selection-popover">
       <View style={styles.header}>
-        <Text style={styles.text} numberOfLines={2}>{selection.text}</Text>
+        <Text style={[styles.text, { color: th.foreground }]} numberOfLines={2}>{selection.text}</Text>
         <Pressable onPress={onDismiss} hitSlop={8} accessibilityLabel={t('common.cancel')}>
-          <Text style={styles.close}>{'✕'}</Text>
+          <Text style={[styles.close, { color: th.muted }]}>{'✕'}</Text>
         </Pressable>
       </View>
       {highlightMode ? (
@@ -54,7 +56,7 @@ export function SelectionPopover({ selection, highlightMode = false, onHighlight
             <Pressable
               key={color}
               testID={`highlight-${color}`}
-              style={[styles.swatch, { backgroundColor: HIGHLIGHT_HEX[color] }]}
+              style={[styles.swatch, { backgroundColor: HIGHLIGHT_HEX[color], borderColor: th.border }]}
               onPress={() => onHighlight?.(color)}
             />
           ))}
@@ -62,16 +64,16 @@ export function SelectionPopover({ selection, highlightMode = false, onHighlight
       ) : (
         <View style={styles.actions}>
           <Pressable style={styles.action} onPress={onDefine}>
-            <Text style={styles.actionText}>{t('lookup.define')}</Text>
+            <Text style={[styles.actionText, { color: th.accent }]}>{t('lookup.define')}</Text>
           </Pressable>
           <Pressable style={styles.action} onPress={onTranslate}>
-            <Text style={styles.actionText}>{t('lookup.translate')}</Text>
+            <Text style={[styles.actionText, { color: th.accent }]}>{t('lookup.translate')}</Text>
           </Pressable>
           <Pressable style={styles.action} onPress={onCopy}>
-            <Text style={styles.actionText}>{t('lookup.copy')}</Text>
+            <Text style={[styles.actionText, { color: th.accent }]}>{t('lookup.copy')}</Text>
           </Pressable>
           <Pressable style={styles.action} onPress={onHighlightPress}>
-            <Text style={styles.actionText}>{t('lookup.highlight')}</Text>
+            <Text style={[styles.actionText, { color: th.accent }]}>{t('lookup.highlight')}</Text>
           </Pressable>
         </View>
       )}
@@ -82,7 +84,6 @@ export function SelectionPopover({ selection, highlightMode = false, onHighlight
 const styles = StyleSheet.create({
   root: {
     position: 'absolute',
-    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 12,
     gap: 8,
@@ -94,9 +95,9 @@ const styles = StyleSheet.create({
   },
   header: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   text: { flex: 1, fontSize: 15, fontWeight: '600' },
-  close: { fontSize: 14, lineHeight: 18, opacity: 0.6 },
+  close: { fontSize: 14, lineHeight: 18 },
   actions: { flexDirection: 'row', gap: 12 },
   action: { paddingVertical: 4 },
-  actionText: { color: '#2D6CDF', fontWeight: '600' },
-  swatch: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: '#00000033' },
+  actionText: { fontWeight: '600' },
+  swatch: { width: 32, height: 32, borderRadius: 16, borderWidth: 1 },
 });

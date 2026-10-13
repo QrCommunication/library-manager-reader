@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import type { FontFamilyOption, ReaderSettings, ThemeName } from '../../core/types';
+import { useReaderTheme } from '../../theme/context';
 
 // Fully controlled: no store, no bridge — the owner persists/applies via onSettingsChange.
 export function TypographyPanel({ settings, onSettingsChange }: {
@@ -9,19 +10,20 @@ export function TypographyPanel({ settings, onSettingsChange }: {
   onSettingsChange(next: ReaderSettings): void;
 }) {
   const { t } = useTranslation();
+  const th = useReaderTheme();
   const patch = (p: Partial<ReaderSettings>) => onSettingsChange({ ...settings, ...p });
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
-      <Text style={styles.sectionLabel}>{t('reader.font')}</Text>
+      <Text style={[styles.sectionLabel, { color: th.muted }]}>{t('reader.font')}</Text>
       <View style={styles.segmentRow}>
         {FONT_OPTIONS.map((option) => (
           <Pressable
             key={option.value}
-            style={[styles.segment, settings.fontFamily === option.value && styles.segmentActive]}
+            style={[styles.segment, { borderColor: th.accent }, settings.fontFamily === option.value && { backgroundColor: th.accent }]}
             onPress={() => patch({ fontFamily: option.value })}
           >
-            <Text style={[styles.segmentText, settings.fontFamily === option.value && styles.segmentTextActive]}>
+            <Text style={[styles.segmentText, { color: th.accent }, settings.fontFamily === option.value && { color: th.onAccent, fontWeight: '600' }]}>
               {t(option.labelKey)}
             </Text>
           </Pressable>
@@ -58,10 +60,10 @@ export function TypographyPanel({ settings, onSettingsChange }: {
         {THEME_OPTIONS.map((option) => (
           <Pressable
             key={option.value}
-            style={[styles.segment, settings.theme === option.value && styles.segmentActive]}
+            style={[styles.segment, { borderColor: th.accent }, settings.theme === option.value && { backgroundColor: th.accent }]}
             onPress={() => patch({ theme: option.value })}
           >
-            <Text style={[styles.segmentText, settings.theme === option.value && styles.segmentTextActive]}>
+            <Text style={[styles.segmentText, { color: th.accent }, settings.theme === option.value && { color: th.onAccent, fontWeight: '600' }]}>
               {t(option.labelKey)}
             </Text>
           </Pressable>
@@ -96,31 +98,32 @@ function Stepper({ label, value, min, max, step, decimals, accessibilityLabel, o
   accessibilityLabel?: string;
   onChange(v: number): void;
 }) {
+  const th = useReaderTheme();
   // round to `decimals` to avoid float drift on repeated +/- taps
   const clamp = (v: number) => Math.min(max, Math.max(min, Number(v.toFixed(decimals))));
   const atMin = value <= min;
   const atMax = value >= max;
   return (
     <View style={styles.stepperRow}>
-      <Text style={styles.stepperLabel}>{label}</Text>
+      <Text style={[styles.stepperLabel, { color: th.foreground }]}>{label}</Text>
       <Pressable
-        style={[styles.stepButton, atMin && styles.buttonDisabled]}
+        style={[styles.stepButton, { borderColor: th.accent }, atMin && styles.buttonDisabled]}
         disabled={atMin}
         hitSlop={8}
         accessibilityLabel={accessibilityLabel ? `${accessibilityLabel}-` : undefined}
         onPress={() => onChange(clamp(value - step))}
       >
-        <Text style={styles.stepSymbol}>{'−'}</Text>
+        <Text style={[styles.stepSymbol, { color: th.accent }]}>{'−'}</Text>
       </Pressable>
-      <Text style={styles.stepValue}>{value.toFixed(decimals)}</Text>
+      <Text style={[styles.stepValue, { color: th.foreground }]}>{value.toFixed(decimals)}</Text>
       <Pressable
-        style={[styles.stepButton, atMax && styles.buttonDisabled]}
+        style={[styles.stepButton, { borderColor: th.accent }, atMax && styles.buttonDisabled]}
         disabled={atMax}
         hitSlop={8}
         accessibilityLabel={accessibilityLabel ? `${accessibilityLabel}+` : undefined}
         onPress={() => onChange(clamp(value + step))}
       >
-        <Text style={styles.stepSymbol}>{'+'}</Text>
+        <Text style={[styles.stepSymbol, { color: th.accent }]}>{'+'}</Text>
       </Pressable>
     </View>
   );
@@ -129,22 +132,20 @@ function Stepper({ label, value, min, max, step, decimals, accessibilityLabel, o
 const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { padding: 12, gap: 12 },
-  sectionLabel: { fontSize: 13, fontWeight: '700', opacity: 0.7 },
+  sectionLabel: { fontSize: 13, fontWeight: '700' },
   segmentRow: { flexDirection: 'row', gap: 8 },
   segment: {
     flex: 1, alignItems: 'center', paddingVertical: 10,
-    borderRadius: 8, borderWidth: 1, borderColor: '#2D6CDF',
+    borderRadius: 8, borderWidth: 1,
   },
-  segmentActive: { backgroundColor: '#2D6CDF' },
-  segmentText: { fontSize: 14, color: '#2D6CDF' },
-  segmentTextActive: { color: '#FFFFFF', fontWeight: '600' },
+  segmentText: { fontSize: 14 },
   stepperRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   stepperLabel: { flex: 1, fontSize: 15 },
   stepButton: {
-    width: 40, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#2D6CDF',
+    width: 40, height: 40, borderRadius: 8, borderWidth: 1,
     alignItems: 'center', justifyContent: 'center',
   },
   buttonDisabled: { opacity: 0.4 },
-  stepSymbol: { fontSize: 20, lineHeight: 24, color: '#2D6CDF' },
+  stepSymbol: { fontSize: 20, lineHeight: 24 },
   stepValue: { minWidth: 44, textAlign: 'center', fontSize: 15, fontVariant: ['tabular-nums'] },
 });
