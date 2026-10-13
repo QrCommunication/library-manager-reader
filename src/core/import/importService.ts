@@ -58,6 +58,13 @@ async function importOne(uri: string, deps: ImportDeps): Promise<ImportOutcome> 
     }
     if (extracted.coverJpegBase64) await deps.fs.writeBase64(deps.paths.coverPath(id), extracted.coverJpegBase64);
 
+    // The row's fileSize must describe the STORED canonical file: for a converted
+    // cbr the stored cbz differs in byte length from the picked file, and the
+    // engine sizes its chunk assembler from book.fileSize — a mismatch would hang
+    // or break every open. Recomputed from disk for the plain copy path too
+    // (copy, not move — same code path for every format).
+    const storedSize = await deps.fs.fileSize(finalPath);
+
     const book = await deps.books.createBook({
       id,
       title: extracted.metadata.title ?? uri.split('/').pop() ?? 'Untitled',
@@ -65,7 +72,7 @@ async function importOne(uri: string, deps: ImportDeps): Promise<ImportOutcome> 
       format,
       originalFormat: original === 'cbr' ? 'cbr' : null,
       fileName: `${id}.${format}`,
-      fileSize: size,
+      fileSize: storedSize,
       language: extracted.metadata.language,
       publisher: extracted.metadata.publisher,
       drmIdentifier: extracted.metadata.identifier,

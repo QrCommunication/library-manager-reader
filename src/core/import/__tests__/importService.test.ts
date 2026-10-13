@@ -3,15 +3,24 @@ import { ExtractionError } from '../../reader/metadataPort';
 
 const makeFs = () => {
   const files = new Map<string, string>();
+  // tracks the real byte size of each written/copied file; unknown paths fall
+  // back to the picked-file size sentinel (1000) so tests can tell them apart
+  const sizes = new Map<string, number>();
   return {
     files,
     freeDiskBytes: async () => 1024 * 1024 * 1024,
     ensureDir: async () => {},
-    copy: async (from: string, to: string) => { files.set(to, files.get(from) ?? 'data'); },
+    copy: async (from: string, to: string) => {
+      files.set(to, files.get(from) ?? 'data');
+      sizes.set(to, sizes.get(from) ?? 4);
+    },
     exists: async (p: string) => files.has(p),
     remove: async (p: string) => { files.delete(p); },
-    fileSize: async (p: string) => 1000,
-    writeBase64: async (p: string, b64: string) => { files.set(p, b64); },
+    fileSize: async (p: string) => sizes.get(p) ?? 1000,
+    writeBase64: async (p: string, b64: string) => {
+      files.set(p, b64);
+      sizes.set(p, Buffer.from(b64, 'base64').length);
+    },
     readBase64Chunks: async () => {},
     directorySize: async () => 0,
   };
@@ -73,5 +82,25 @@ describe('runImport', () => {
     const outcomes = await runImport(['file:///x/Broken.epub'], baseDeps(fs, { extractor }));
     expect(outcomes[0]).toMatchObject({ ok: false, reason: 'parse_failed' });
     expect([...fs.files.keys()].filter((k) => k.includes('.importing'))).toHaveLength(0);
+  });
+
+  it('records the STORED cbz size for a converted cbr, not the picked size', async () => {
+    const fs = makeFs();
+    // picked file size is the makeFs sentinel (1000); the converted cbz is 5 bytes
+    const extractor = { extract: async () => ({ metadata: { title: 'C', author: null, language: null, publisher: null, identifier: null }, coverJpegBase64: null, cbzBase64: 'aGVsbG8=' }) };
+    const createBook = jest.fn(async (b: { fileSize: number }) => ({ id: 'cbr-book' }));
+    const outcomes = await runImport(['file:///x/Comics.cbr'], baseDeps(fs, { extractor, books: { createBook } }));
+    expect(outcomes[0]).toMatchObject({ ok: true });
+    expect(createBook.mock.calls[0]![0].fileSize).toBe(5);
+    expect(createBook.mock.calls[0]![0].fileSize).not.toBe(1000);
+  });
+
+  it('recomputes fileSize from the stored copy for non-converted imports too', async () => {
+    const fs = makeFs();
+    const createBook = jest.fn(async (b: { fileSize: number }) => ({ id: 'epub-book' }));
+    const outcomes = await runImport(['file:///x/Book.epub'], baseDeps(fs, { books: { createBook } }));
+    expect(outcomes[0]).toMatchObject({ ok: true });
+    // stored copy size ('data' → 4), not the picked-file sentinel (1000)
+    expect(createBook.mock.calls[0]![0].fileSize).toBe(4);
   });
 });
