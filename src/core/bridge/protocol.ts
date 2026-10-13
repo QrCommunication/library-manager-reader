@@ -22,7 +22,7 @@ export type EngineToApp =
   | { type: 'engineReady'; protocolVersion: number }
   | { type: 'dataAck'; seq: number }
   | { type: 'bookLoaded'; toc: TocItem[]; metadata: EngineMetadataPayload }
-  | { type: 'progress'; cfi: string | null; fraction: number; sectionIndex: number }
+  | { type: 'progress'; cfi: string | null; fraction: number; sectionIndex: number | null }
   | { type: 'bookmarkCaptured'; target: string; fraction: number; excerpt: string }
   | { type: 'extractResult'; requestId: string; ok: true; metadata: EngineMetadataPayload; cbzBase64: string | null }
   | { type: 'extractResult'; requestId: string; ok: false; error: string }
