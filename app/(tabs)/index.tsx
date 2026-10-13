@@ -1,21 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { LibraryScreen } from '../../src/features/library/LibraryScreen';
 
 export default function HomeScreen() {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Library Reader</Text>
-    </View>
-  );
+  return <LibraryScreen />;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-});
