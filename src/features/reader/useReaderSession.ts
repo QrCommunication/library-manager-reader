@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useServices, type AppServices } from '../../core/services';
-import { ReaderBridge } from '../../core/reader/bridge';
+import { ReaderBridge, type SearchResultPayload, type SelectionPayload, type TtsSentencePayload } from '../../core/reader/bridge';
 import { createBase64BookTransport } from '../../core/reader/bookTransport';
 import { useReaderSettingsStore } from '../settings/readerSettingsStore';
-import type { BookFormat, ReaderSettings, TocItem } from '../../core/types';
+import type { BookFormat, HighlightColor, ReaderSettings, TocItem } from '../../core/types';
 
 export interface BridgeLike {
   openBook(a: { format: BookFormat; path: string; size: number }): Promise<{ toc: TocItem[]; metadata: unknown }>;
@@ -15,6 +15,18 @@ export interface BridgeLike {
   onProgress(cb: (p: { cfi: string | null; fraction: number; sectionIndex: number | null }) => void): () => void;
   onEngineError(cb: (e: { code: string; message: string }) => void): () => void;
   whenReady(): Promise<number>;
+  addHighlight(id: string, cfi: string, color: HighlightColor): void;
+  removeHighlight(id: string): void;
+  copySelection(): void;
+  search(query: string): void;
+  searchCancel(): void;
+  ttsStart(cfi: string | null): void;
+  ttsStop(): void;
+  ttsNext(): void;
+  onSelectionChanged(cb: (s: SelectionPayload) => void): () => void;
+  onSearchResult(cb: (r: SearchResultPayload) => void): () => void;
+  onSearchDone(cb: (count: number) => void): () => void;
+  onTtsSentence(cb: (s: TtsSentencePayload) => void): () => void;
 }
 
 export interface ReaderSessionDeps {

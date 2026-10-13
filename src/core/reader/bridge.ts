@@ -1,15 +1,23 @@
 import { parseMessage } from '../bridge/codec';
 import { PROTOCOL_VERSION, type AppToEngine, type EngineMetadataPayload, type EngineToApp } from '../bridge/protocol';
-import type { BookFormat, ReaderSettings, TocItem } from '../types';
+import type { BookFormat, HighlightColor, ReaderSettings, SelectionRect, TocItem } from '../types';
 import type { BookTransport } from './bookTransport';
 
 type Send = (raw: string) => void;
+
+export interface SelectionPayload { text: string | null; rect: SelectionRect | null; cfi: string | null; lang: string | null }
+export interface SearchResultPayload { cfi: string; excerpt: string; fraction: number }
+export interface TtsSentencePayload { text: string; cfi: string | null }
 
 export class ReaderBridge {
   private readyPromise: Promise<number>;
   private resolveReady!: (v: number) => void;
   private progressCbs = new Set<(p: { cfi: string | null; fraction: number; sectionIndex: number | null }) => void>();
   private errorCbs = new Set<(e: { code: string; message: string }) => void>();
+  private selectionCbs = new Set<(s: SelectionPayload) => void>();
+  private searchResultCbs = new Set<(r: SearchResultPayload) => void>();
+  private searchDoneCbs = new Set<(count: number) => void>();
+  private ttsSentenceCbs = new Set<(s: TtsSentencePayload) => void>();
   private bookLoadedWaiter: { resolve: (v: { toc: TocItem[]; metadata: EngineMetadataPayload }) => void; reject: (e: Error) => void } | null = null;
   private ackWaiters: ((seq: number) => void)[] = [];
   private lastAck = -1;
@@ -56,6 +64,18 @@ export class ReaderBridge {
         for (const cb of this.errorCbs) cb({ code: msg.code, message: msg.message });
         this.bookLoadedWaiter?.reject(new Error(`${msg.code}: ${msg.message}`));
         this.bookLoadedWaiter = null;
+        break;
+      case 'selectionChanged':
+        for (const cb of this.selectionCbs) cb({ text: msg.text, rect: msg.rect, cfi: msg.cfi, lang: msg.lang });
+        break;
+      case 'searchResult':
+        for (const cb of this.searchResultCbs) cb({ cfi: msg.cfi, excerpt: msg.excerpt, fraction: msg.fraction });
+        break;
+      case 'searchDone':
+        for (const cb of this.searchDoneCbs) cb(msg.count);
+        break;
+      case 'ttsSentence':
+        for (const cb of this.ttsSentenceCbs) cb({ text: msg.text, cfi: msg.cfi });
         break;
       default:
         break;
@@ -117,4 +137,18 @@ export class ReaderBridge {
     this.errorCbs.add(cb);
     return () => this.errorCbs.delete(cb);
   }
+
+  addHighlight(id: string, cfi: string, color: HighlightColor): void { this.emit({ type: 'addHighlight', id, cfi, color }); }
+  removeHighlight(id: string): void { this.emit({ type: 'removeHighlight', id }); }
+  copySelection(): void { this.emit({ type: 'copySelection' }); }
+  search(query: string): void { this.emit({ type: 'search', query }); }
+  searchCancel(): void { this.emit({ type: 'searchCancel' }); }
+  ttsStart(cfi: string | null): void { this.emit({ type: 'ttsStart', cfi }); }
+  ttsStop(): void { this.emit({ type: 'ttsStop' }); }
+  ttsNext(): void { this.emit({ type: 'ttsNext' }); }
+
+  onSelectionChanged(cb: (s: SelectionPayload) => void): () => void { this.selectionCbs.add(cb); return () => this.selectionCbs.delete(cb); }
+  onSearchResult(cb: (r: SearchResultPayload) => void): () => void { this.searchResultCbs.add(cb); return () => this.searchResultCbs.delete(cb); }
+  onSearchDone(cb: (count: number) => void): () => void { this.searchDoneCbs.add(cb); return () => this.searchDoneCbs.delete(cb); }
+  onTtsSentence(cb: (s: TtsSentencePayload) => void): () => void { this.ttsSentenceCbs.add(cb); return () => this.ttsSentenceCbs.delete(cb); }
 }
