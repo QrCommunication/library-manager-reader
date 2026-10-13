@@ -26,7 +26,13 @@ export function createSettingsRepo(db: DbDriver) {
   return {
     getReaderSettings: () => read(READER_KEY, DEFAULT_READER_SETTINGS),
     putReaderSettings: (s: ReaderSettings) => write(READER_KEY, s),
-    getUiPrefs: () => read(UI_KEY, DEFAULT_UI_PREFS),
+    getUiPrefs: async (): Promise<UiPrefs> => {
+      const prefs = await read(UI_KEY, DEFAULT_UI_PREFS);
+      // the LibreTranslate inputs left Réglages, so the shipped server is an
+      // internal constant — rows persisted by older builds (which stored
+      // libretranslate.com + empty key on any pref save) must not shadow it
+      return { ...prefs, libreTranslateUrl: DEFAULT_UI_PREFS.libreTranslateUrl, libreTranslateApiKey: DEFAULT_UI_PREFS.libreTranslateApiKey };
+    },
     putUiPrefs: (p: UiPrefs) => write(UI_KEY, p),
   };
 }

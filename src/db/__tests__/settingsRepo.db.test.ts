@@ -25,15 +25,21 @@ describe('settingsRepo', () => {
     expect(await repo.getUiPrefs()).toEqual({ ...DEFAULT_UI_PREFS, language: 'fr', defaultTheme: 'sepia' });
   });
 
-  it('merges new libreTranslate defaults into a stored pre-v1.x prefs row', async () => {
+  it('never lets a stored row override the shipped LibreTranslate server', async () => {
+    // every pre-#17 build persisted libreTranslateUrl 'https://libretranslate.com'
+    // with an empty key whenever the user saved any pref (theme, language…);
+    // the Réglages inputs are gone, so those stale values must not shadow the
+    // shipped shared server (they made every translation 401 → "service a échoué")
     const db = createNodeSqliteDriver(new DatabaseSync(':memory:'));
     await migrate(db);
-    await db.run('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)', ['uiPrefs', JSON.stringify({ language: 'fr' }), 1]);
+    await db.run('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)', [
+      'uiPrefs',
+      JSON.stringify({ language: 'fr', defaultTheme: 'sepia', libreTranslateUrl: 'https://libretranslate.com', libreTranslateApiKey: '' }),
+      1,
+    ]);
     const repo = createSettingsRepo(db);
     const prefs = await repo.getUiPrefs();
-    expect(prefs.language).toBe('fr');
-    // shipped translation endpoint: the shared community server, key included —
-    // translation works out of the box, a stored custom URL still wins
+    expect(prefs.defaultTheme).toBe('sepia');
     expect(prefs.libreTranslateUrl).toBe('https://translate.rlconseil.net');
     expect(prefs.libreTranslateApiKey).toBe('73d6bbf4-eaba-4bbf-ad82-d58f9ccba23d');
   });
