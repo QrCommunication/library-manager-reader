@@ -33,6 +33,7 @@ export function LibraryScreen() {
   const [sort, setSort] = useState<SortKey>('recent');
   const [query, setQuery] = useState('');
   const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [outcomes, setOutcomes] = useState<ImportOutcome[] | null>(null);
   const [menuBook, setMenuBook] = useState<Book | null>(null);
   const { books, refresh } = useBooks(sort, query);
@@ -42,10 +43,12 @@ export function LibraryScreen() {
     const result = await DocumentPicker.getDocumentAsync({ multiple: true, type: [...SUPPORTED_MIME], copyToCacheDirectory: true });
     if (result.canceled) return;
     setImporting(true);
+    setProgress({ done: 0, total: result.assets.length });
     try {
       const results = await runImport(result.assets.map((a) => a.uri), {
         fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine(),
         untitledTitle: t('library.untitled'),
+        onProgress: (p) => setProgress({ done: p.done, total: p.total }),
       });
       setOutcomes(results);
     } catch (err) {
@@ -60,6 +63,7 @@ export function LibraryScreen() {
       }]);
     } finally {
       setImporting(false);
+      setProgress(null);
       await refresh();
     }
   };
@@ -111,6 +115,17 @@ export function LibraryScreen() {
           </Pressable>
         ))}
       </View>
+      {importing && progress ? (
+        <View style={[styles.importBanner, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
+          <Text style={[styles.importText, { color: t0.foreground }]}>
+            {t('library.importing', { done: progress.done, total: progress.total })}
+          </Text>
+          <View style={styles.importTrack}>
+            <View style={{ flex: progress.done / progress.total, backgroundColor: t0.accent, borderRadius: 2 }} />
+            <View style={{ flex: 1 - progress.done / progress.total }} />
+          </View>
+        </View>
+      ) : null}
       {books.length === 0 ? (
         <View style={styles.empty}>
           <View style={[styles.emptyGlyphWrap, { backgroundColor: t0.chrome }]}>
@@ -189,6 +204,12 @@ const styles = StyleSheet.create({
   search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 42, marginBottom: 10 },
   searchInput: { flex: 1, fontSize: 15, paddingVertical: 0 },
   sortRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+  importBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, height: 42, marginBottom: 10,
+  },
+  importText: { fontSize: 14, fontWeight: '600', minWidth: 120 },
+  importTrack: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: '#88888833', flexDirection: 'row' },
   sortChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, borderWidth: 1 },
   sortChipText: { fontSize: 13, fontWeight: '600' },
   grid: { paddingBottom: 96, gap: 4 },

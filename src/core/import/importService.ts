@@ -24,6 +24,8 @@ export interface ImportDeps {
   newId?: () => string;
   /** localized fallback title for books without any title or usable file name (core layer stays i18n-free) */
   untitledTitle?: string;
+  /** per-file import progress (1-based done count); drives the library import banner */
+  onProgress?: (p: { done: number; total: number; uri: string }) => void;
 }
 
 const STORED_EXT: Record<Exclude<OriginalFormat, null>, BookFormat> = {
@@ -33,6 +35,7 @@ const STORED_EXT: Record<Exclude<OriginalFormat, null>, BookFormat> = {
 export async function runImport(uris: string[], deps: ImportDeps): Promise<ImportOutcome[]> {
   const outcomes: ImportOutcome[] = [];
   await deps.paths.ensureAll();
+  let done = 0;
   for (const uri of uris) {
     try {
       outcomes.push(await importOne(uri, deps));
@@ -40,6 +43,8 @@ export async function runImport(uris: string[], deps: ImportDeps): Promise<Impor
       console.warn('[import] failed', uri, err);
       outcomes.push({ uri, ok: false, reason: 'io_error', detail: errDetail(err) });
     }
+    done += 1;
+    deps.onProgress?.({ done, total: uris.length, uri });
   }
   return outcomes;
 }
