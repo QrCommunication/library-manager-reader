@@ -240,7 +240,7 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
           <Modal transparent visible animationType="slide" onRequestClose={closePanel}>
             <View style={[styles.backdrop, sideDrawer && styles.backdropSide]}>
               <Pressable style={styles.backdropPress} onPress={closePanel} accessibilityLabel={t('common.cancel')} />
-              <View style={[styles.drawer, { backgroundColor: rt.chrome }, sideDrawer ? styles.drawerSide : styles.drawerBottom]}>
+              <View testID="reader-drawer" style={[styles.drawer, { backgroundColor: rt.chrome }, sideDrawer ? styles.drawerSide : styles.drawerBottom]}>
                 {panel === 'toc' ? <TocPanel toc={toc} onNavigate={navigateFromPanel} /> : null}
                 {panel === 'bookmarks' ? (
                   <BookmarksPanel bookId={bookId} bridge={reader} onNavigate={navigateFromPanel} />
@@ -323,6 +323,9 @@ const styles = StyleSheet.create({
     paddingTop: 8, paddingBottom: 16, minHeight: 120,
   },
   drawerBottom: {
+    // explicit height: the panels are flex:1 ScrollViews, which collapse to
+    // minHeight in an auto-height parent — the "tiny panel" phone bug
+    height: '65%',
     maxHeight: '70%',
     borderTopLeftRadius: 16, borderTopRightRadius: 16,
   },
