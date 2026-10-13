@@ -1,7 +1,10 @@
 import { PROTOCOL_VERSION, type AppToEngine, type EngineToApp } from '../core/bridge/protocol';
 import { View } from 'foliate-js/view.js';
 import { createChunkAssembler } from './chunkAssembler';
-import type { ReaderSettings, TocItem } from '../core/types';
+import { convertCbrToCbz } from './extractMode';
+import { createExtractorFromData } from 'node-unrar-js';
+import { zipSync, strToU8 } from 'fflate';
+import type { OriginalFormat, ReaderSettings, TocItem } from '../core/types';
 
 declare const __LITERATA_B64__: string;
 
@@ -101,6 +104,7 @@ let settings: ReaderSettings = {
 };
 
 let assembler: ReturnType<typeof createChunkAssembler> | null = null;
+let pendingExtract: { requestId: string; format: OriginalFormat } | null = null;
 
 async function blobFromBase64(b64: string): Promise<Blob> {
   const bin = atob(b64);
@@ -109,19 +113,118 @@ async function blobFromBase64(b64: string): Promise<Blob> {
   return new Blob([bytes]);
 }
 
+async function imagesFromRar(data: Uint8Array): Promise<{ name: string; data: Uint8Array }[]> {
+  // node-unrar-js accepts an ArrayBuffer: reuse the backing buffer when the view covers it
+  // exactly, else copy (avoids doubling memory for large CBRs before its own internal copy)
+  const ab = data.byteOffset === 0 && data.byteLength === data.buffer.byteLength
+    ? data.buffer
+    : data.slice().buffer;
+  const extractor = await createExtractorFromData({ data: ab as ArrayBuffer });
+  const list = extractor.getFileList();
+  const headers = [...list.fileHeaders].filter((h) => /\.(jpe?g|png|gif|webp|bmp)$/i.test(h.name));
+  const extracted = extractor.extract({ files: headers.map((h) => h.name) });
+  const out: { name: string; data: Uint8Array }[] = [];
+  // real node-unrar-js ArcFile shape: { fileHeader: { name }, extraction?: Uint8Array }
+  for (const f of extracted.files) {
+    if (f.extraction) out.push({ name: f.fileHeader.name, data: new Uint8Array(f.extraction) });
+  }
+  return out;
+}
+
+async function coverToJpegBase64(): Promise<string | null> {
+  try {
+    // real foliate cover API: book.getCover() returns a Blob (reader.js wraps it via URL.createObjectURL)
+    const book = view.book as unknown as { getCover?: () => Promise<Blob | null> } | undefined;
+    const blob = await book?.getCover?.();
+    if (!blob) return null;
+    const coverUrl = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = coverUrl; });
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 512 / Math.max(img.width, img.height));
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      return dataUrl.slice(dataUrl.indexOf(',') + 1);
+    } finally {
+      URL.revokeObjectURL(coverUrl);
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function btoaBytes(bytes: Uint8Array): Promise<string> {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(out);
+}
+
+async function finishExtract(requestId: string, format: OriginalFormat, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
+  try {
+    // Uint8Array<ArrayBuffer>: both sources (assembler output, zipSync output) are ArrayBuffer-backed;
+    // required for BlobPart under TS 6 lib.dom strictness
+    let openBytes: Uint8Array<ArrayBuffer> = bytes;
+    // convertCbrToCbz takes a sync extractImages; node-unrar-js is async, so resolve the
+    // image list first and hand over a sync closure (called exactly once with the rar bytes)
+    if (format === 'cbr') {
+      const images = await imagesFromRar(bytes);
+      openBytes = convertCbrToCbz(bytes, {
+        extractImages: () => images,
+        zip: (files) => zipSync(Object.fromEntries(files.map((f) => [f.name, f.data])) as Record<string, Uint8Array>, { level: 6 }),
+      }) as Uint8Array<ArrayBuffer>;
+    }
+    // attach the load listener BEFORE opening so the load event cannot be missed
+    await new Promise<void>((resolve, reject) => {
+      const once = () => { view.removeEventListener('load', once); resolve(); };
+      view.addEventListener('load', once);
+      void view.open(new Blob([openBytes])).catch(reject);
+    });
+    // installed foliate emits 'load' with { doc, index } only; metadata lives on view.book (as read by bookLoaded)
+    const book = view.book;
+    const cover = await coverToJpegBase64();
+    send({
+      type: 'extractResult', requestId, ok: true,
+      cbzBase64: format === 'cbr' ? await btoaBytes(openBytes) : null,
+      metadata: {
+        title: book?.metadata?.title ?? null,
+        author: book?.metadata?.author ?? null,
+        language: book?.metadata?.language ?? null,
+        publisher: book?.metadata?.publisher ?? null,
+        identifier: book?.metadata?.identifier ?? null,
+        coverJpegBase64: cover,
+      },
+    });
+  } catch (err) {
+    send({ type: 'extractResult', requestId, ok: false, error: String(err) });
+  }
+}
+
 async function handle(msg: AppToEngine): Promise<void> {
   switch (msg.type) {
     case 'openBook':
       assembler = createChunkAssembler(msg.size);
       break;
+    case 'extract': {
+      assembler = createChunkAssembler(msg.size);
+      pendingExtract = { requestId: msg.requestId, format: msg.format };
+      break;
+    }
     case 'data': {
       const result = assembler!.push(msg.seq, msg.base64);
       send({ type: 'dataAck', seq: msg.seq });
       if (result.complete && result.bytes) {
-        try {
-          await view.open(new Blob([result.bytes]));
-        } catch (err) {
-          send({ type: 'engineError', code: 'open_failed', message: String(err) });
+        if (pendingExtract) {
+          const { requestId, format } = pendingExtract;
+          pendingExtract = null;
+          void finishExtract(requestId, format, result.bytes);
+        } else {
+          try { await view.open(new Blob([result.bytes])); }
+          catch (err) { send({ type: 'engineError', code: 'open_failed', message: String(err) }); }
         }
       }
       break;
