@@ -48,6 +48,7 @@ export const en = {
     lineHeight: 'Line height',
     margins: 'Margins',
     brightness: 'Brightness',
+    concentration: 'Concentration mode',
     tts: 'Text-to-speech',
   },
   tts: {

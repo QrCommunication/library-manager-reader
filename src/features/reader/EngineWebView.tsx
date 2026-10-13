@@ -26,16 +26,20 @@ export function EngineWebView({ bridge, onFatal, onReload }: { bridge: ReaderBri
     <View style={StyleSheet.absoluteFill}>
       <WebView
         ref={ref}
-        source={{ html: buildEngineHtml() }}
+        // baseUrl gives the engine document a real origin: from about:blank
+        // (opaque origin) foliate's section blob: iframes crash WebView 154+
+        // renderers on device (CHECK in libwebviewchromium, crash loop)
+        source={{ html: buildEngineHtml(), baseUrl: 'https://localhost/' }}
         originWhitelist={['*']}
         javaScriptEnabled
         setSupportMultipleWindows={false}
         onMessage={onMessage}
         onRenderProcessGone={onGone}
         onError={onGone}
-        // only the engine document may load: the html has no base URL (about:blank)
-        // and engine-internal content uses data:/blob: URIs — anything else is a
-        // book link trying to navigate the webview away
+        // only the engine document may load: the html is memory-backed (baseUrl
+        // https://localhost is never fetched) and engine-internal content uses
+        // data:/blob: URIs — anything else is a book link trying to navigate
+        // the webview away
         onShouldStartLoadWithRequest={(request) =>
           request.url.startsWith('about:') || request.url.startsWith('data:') || request.url.startsWith('blob:')}
         style={{ backgroundColor: 'transparent' }}

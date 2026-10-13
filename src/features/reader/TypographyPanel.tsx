@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import type { FontFamilyOption, ReaderSettings, ThemeName } from '../../core/types';
 import { useReaderTheme } from '../../theme/context';
@@ -56,6 +56,17 @@ export function TypographyPanel({ settings, onSettingsChange }: {
         accessibilityLabel="brightness"
         onChange={(v) => patch({ brightness: v })}
       />
+
+      <View style={styles.toggleRow}>
+        <Text style={[styles.stepperLabel, { color: th.foreground }]}>{t('reader.concentration')}</Text>
+        <Switch
+          value={settings.concentration === true}
+          onValueChange={(v) => patch({ concentration: v })}
+          trackColor={{ false: th.border, true: th.accent }}
+          thumbColor={th.onAccent}
+          accessibilityLabel="concentration"
+        />
+      </View>
 
       <View style={styles.segmentRow}>
         {THEME_OPTIONS.map((option) => (
@@ -149,6 +160,7 @@ const styles = StyleSheet.create({
   },
   segmentText: { fontSize: 14 },
   stepperRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   stepperLabel: { flex: 1, fontSize: 15 },
   stepButton: {
     width: 40, height: 40, borderRadius: 8, borderWidth: 1,

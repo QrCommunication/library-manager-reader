@@ -34,7 +34,7 @@ export function HeadlessEngineView() {
     <View style={styles.host}>
       <WebView
         ref={ref}
-        source={{ html: buildEngineHtml() }}
+        source={{ html: buildEngineHtml(), baseUrl: 'https://localhost/' }}
         originWhitelist={['*']}
         javaScriptEnabled
         setSupportMultipleWindows={false}

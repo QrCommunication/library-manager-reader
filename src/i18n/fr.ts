@@ -48,6 +48,7 @@ export const fr = {
     lineHeight: 'Interligne',
     margins: 'Marges',
     brightness: 'Luminosité',
+    concentration: 'Mode concentration',
     tts: 'Lecture audio',
   },
   tts: {

@@ -55,6 +55,9 @@ writeFileSync(
   "  return '<!doctype html><html><head><meta charset=\"utf-8\">' +\n" +
   "    '<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, user-scalable=no\">' +\n" +
   "    '<style>' +\n" +
+  "    'html,body{height:100%;margin:0;}' +\n" +
+  "    // sized chain down to #book, else the foliate view collapses to 0 height\n" +
+  "    '#book{width:100%;height:100%;box-sizing:border-box;}' +\n" +
   "    '@font-face{font-family:Literata;src:url(data:font/woff2;base64,' + __LITERATA_B64__ + ') format(\"woff2\");}' +\n" +
   "    '@font-face{font-family:Lexend;src:url(data:font/woff2;base64,' + __LEXEND_B64__ + ') format(\"woff2\");}' +\n" +
   "    '@font-face{font-family:\"Atkinson Hyperlegible\";src:url(data:font/woff2;base64,' + __ATKINSON_B64__ + ') format(\"woff2\");}' +\n" +

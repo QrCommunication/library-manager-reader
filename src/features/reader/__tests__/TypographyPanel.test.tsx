@@ -5,7 +5,7 @@ import { initI18n } from '../../../i18n';
 import type { ReaderSettings } from '../../../core/types';
 
 const BASE_SETTINGS: ReaderSettings = {
-  fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0,
+  fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0, concentration: false,
 };
 
 describe('TypographyPanel', () => {
@@ -17,7 +17,7 @@ describe('TypographyPanel', () => {
     const onSettingsChange = jest.fn();
     await render(
       <TypographyPanel
-        settings={{ fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0 }}
+        settings={{ fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0, concentration: false }}
         onSettingsChange={onSettingsChange}
       />,
     );
@@ -95,5 +95,26 @@ describe('TypographyPanel', () => {
     }
     expect(onSettingsChange).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: 10 }));
     expect(minus).toBeDisabled();
+  });
+
+  it('emits concentration toggles in both directions', async () => {
+    const onSettingsChange = jest.fn();
+    // controlled harness mirrors emitted settings so the Switch flips like on a real screen
+    function Harness() {
+      const [settings, setSettings] = useState<ReaderSettings>(BASE_SETTINGS);
+      return (
+        <TypographyPanel
+          settings={settings}
+          onSettingsChange={(next) => { onSettingsChange(next); setSettings(next); }}
+        />
+      );
+    }
+    await render(<Harness />);
+    const toggle = screen.getByLabelText('concentration');
+    expect(toggle.props.value).toBe(false);
+    fireEvent(toggle, 'valueChange', true);
+    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ concentration: true }));
+    fireEvent(toggle, 'valueChange', false);
+    expect(onSettingsChange).toHaveBeenLastCalledWith(expect.objectContaining({ concentration: false }));
   });
 });

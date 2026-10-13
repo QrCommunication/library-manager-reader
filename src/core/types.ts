@@ -93,6 +93,7 @@ export interface ReaderSettings {
   theme: ThemeName;
   ttsRate: number; // 0.5–2.0
   brightness: number; // 0–70 (% d'assombrissement)
+  concentration: boolean; // bionic reading: bold word starts
 }
 
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
@@ -103,6 +104,7 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   theme: 'day',
   ttsRate: 1,
   brightness: 0,
+  concentration: false,
 };
 
 export interface UiPrefs {
