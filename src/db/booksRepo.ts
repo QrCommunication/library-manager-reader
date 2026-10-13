@@ -61,7 +61,9 @@ export function createBooksRepo(db: DbDriver, newId: () => string) {
         params.push(like, like);
       }
       if (opts.series) {
-        where.push('series = ?');
+        // case-insensitive so a chip picked from the series sheet matches books
+        // whose metadata spells the series differently
+        where.push('series COLLATE NOCASE = ?');
         params.push(opts.series);
       }
       const rows = await db.all<BookRow>(`SELECT * FROM books WHERE ${where.join(' AND ')} ${order}`, params);
@@ -69,7 +71,7 @@ export function createBooksRepo(db: DbDriver, newId: () => string) {
     },
     async listSeries(): Promise<{ name: string; count: number }[]> {
       const rows = await db.all<{ series: string; n: number }>(
-        'SELECT series, COUNT(*) AS n FROM books WHERE deleted_at IS NULL AND series IS NOT NULL GROUP BY series ORDER BY series COLLATE NOCASE ASC',
+        'SELECT series, COUNT(*) AS n FROM books WHERE deleted_at IS NULL AND series IS NOT NULL GROUP BY series COLLATE NOCASE ORDER BY series COLLATE NOCASE ASC',
       );
       return rows.map((r) => ({ name: r.series, count: r.n }));
     },

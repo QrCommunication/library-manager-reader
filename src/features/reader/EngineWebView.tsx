@@ -5,7 +5,11 @@ import { buildEngineHtml } from '../../engine/engineHtml';
 import { bridgeTarget } from './useReaderSession';
 import type { ReaderBridge } from '../../core/reader/bridge';
 
-export function EngineWebView({ bridge, onFatal, onReload }: { bridge: ReaderBridge; onFatal(): void; onReload(): void }) {
+// topInset reserves the status-bar height above the engine viewport. It is set
+// at mount and never changes mid-session: resizing the paginator host while
+// reading loses the page (see engine.ts applySettings), so the inset must not
+// be applied as a live style update.
+export function EngineWebView({ bridge, onFatal, onReload, topInset = 0 }: { bridge: ReaderBridge; onFatal(): void; onReload(): void; topInset?: number }) {
   const ref = useRef<WebView>(null);
   const reloads = useRef(0);
 
@@ -23,7 +27,7 @@ export function EngineWebView({ bridge, onFatal, onReload }: { bridge: ReaderBri
   };
 
   return (
-    <View style={StyleSheet.absoluteFill}>
+    <View testID="engine-root" style={[StyleSheet.absoluteFill, { top: topInset }]}>
       <WebView
         ref={ref}
         // baseUrl gives the engine document a real origin: from about:blank
@@ -33,6 +37,11 @@ export function EngineWebView({ bridge, onFatal, onReload }: { bridge: ReaderBri
         originWhitelist={['*']}
         javaScriptEnabled
         setSupportMultipleWindows={false}
+        // Android: an empty custom menu REPLACES the system selection action
+        // mode (contextMenuHidden was removed in react-native-webview 13) —
+        // selection still works in the engine, only the app's SelectionPopover
+        // (Définir/Traduire/Copier/Surligner) shows
+        menuItems={[]}
         onMessage={onMessage}
         onRenderProcessGone={onGone}
         onError={onGone}

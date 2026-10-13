@@ -122,8 +122,7 @@ export const en = {
     },
     storage: 'Storage',
     about: 'About',
-    libreTranslateUrl: 'LibreTranslate URL',
-    libreTranslateApiKey: 'LibreTranslate API key',
+    translateTarget: 'Translation language',
   },
   import: {
     failed: {

@@ -1,5 +1,6 @@
 import React from 'react';
-import { act, render } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
+import { act, render, screen } from '@testing-library/react-native';
 import { EngineWebView } from '../EngineWebView';
 
 // module-level state captured by the jest.mock factory below (jest hoists the
@@ -67,5 +68,26 @@ describe('EngineWebView crash recovery', () => {
     expect(gate({ url: 'blob:https://origin/uuid' })).toBe(true);
     expect(gate({ url: 'https://evil.example/page' })).toBe(false);
     expect(gate({ url: 'file:///sdcard/evil.html' })).toBe(false);
+  });
+
+  it('suppresses the native selection menu so the app popover (with Copier) shows instead', async () => {
+    await render(<EngineWebView bridge={fakeBridge} onReload={onReload} onFatal={onFatal} />);
+    // contextMenuHidden is gone in react-native-webview 13: an EMPTY custom
+    // menuItems list is the supported way to replace the system action mode
+    expect(mockWebViewProps?.menuItems).toEqual([]);
+  });
+
+  it('reserves the status-bar height above the engine viewport when topInset is set', async () => {
+    await render(<EngineWebView bridge={fakeBridge} onReload={onReload} onFatal={onFatal} topInset={24} />);
+    const root = screen.getByTestId('engine-root');
+    const style = StyleSheet.flatten(root.props.style as never);
+    expect(style).toEqual(expect.objectContaining({ top: 24 }));
+  });
+
+  it('keeps the engine viewport full-bleed when no topInset is given', async () => {
+    await render(<EngineWebView bridge={fakeBridge} onReload={onReload} onFatal={onFatal} />);
+    const root = screen.getByTestId('engine-root');
+    const style = StyleSheet.flatten(root.props.style as never);
+    expect(style).toEqual(expect.objectContaining({ top: 0 }));
   });
 });

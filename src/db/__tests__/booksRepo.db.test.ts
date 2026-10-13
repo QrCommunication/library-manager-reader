@@ -105,6 +105,16 @@ describe('booksRepo', () => {
     ]);
   });
 
+  it('groups and filters series case-insensitively', async () => {
+    const repo = await setup();
+    await repo.createBook(book({ title: 'Prélude', series: 'fondation', seriesIndex: 1 }));
+    await repo.createBook(book({ title: 'Empire', series: 'Fondation', seriesIndex: 2 }));
+    const series = await repo.listSeries();
+    expect(series).toEqual([{ name: expect.stringMatching(/^[Ff]ondation$/), count: 2 }]);
+    const filtered = await repo.listBooks({ sort: 'title', series: 'FONDATION' });
+    expect(filtered.map((x) => x.title)).toEqual(['Empire', 'Prélude']);
+  });
+
   it('finds duplicates by drm identifier, case/whitespace-insensitive', async () => {
     const repo = await setup();
     await repo.createBook(book({ drmIdentifier: 'urn:isbn:0450018471' }));

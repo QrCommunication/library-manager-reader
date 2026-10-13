@@ -63,6 +63,12 @@ jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
 }));
 
+// ReaderScreen positions chrome and the selection popover below the status
+// bar: pin a non-zero inset so coordinate-offset regressions can't hide
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 40, bottom: 20, left: 0, right: 0 }),
+}));
+
 // pin the compact phone layout: RNTL's default window (750px) would route
 // panels to the side drawer and mask the bottom-drawer regression
 jest.mock('../../../ui/windowClasses', () => {
@@ -156,5 +162,21 @@ describe('ReaderScreen engine seam', () => {
     const drawer = await screen.findByTestId('reader-drawer');
     const style = StyleSheet.flatten(drawer.props.style as never);
     expect(style).toEqual(expect.objectContaining({ height: '65%' }));
+  });
+
+  it('offsets selection-viewport coords by the status-bar inset (popover is positioned in root coords)', async () => {
+    const services = await makeServices();
+    await render(
+      <ServicesProvider value={services}>
+        <ReaderScreen bookId="b1" />
+      </ServicesProvider>,
+    );
+    await waitFor(() => expect(screen.queryByText('Chargement…')).toBeNull(), { timeout: 5000 });
+    // engine rect y=200 is relative to the inset-shifted WebView; the popover
+    // anchors at y-56 in ROOT coords → 200 + 40 (inset) - 56 = 184
+    pageEmit({ type: 'selectionChanged', text: 'mot', rect: { x: 100, y: 200, width: 60, height: 30 }, cfi: 'epubcfi(/6/4)', lang: null });
+    const popover = await screen.findByTestId('selection-popover');
+    const style = StyleSheet.flatten(popover.props.style as never);
+    expect(style).toEqual(expect.objectContaining({ top: 184 }));
   });
 });

@@ -116,6 +116,9 @@ export interface UiPrefs {
   defaultTheme: ThemeName;
   libreTranslateUrl: string;
   libreTranslateApiKey: string;
+  // LibreTranslate target code translations point at (one of the server's
+  // supported languages, see SettingsScreen)
+  translateTarget: string;
 }
 
 export const DEFAULT_UI_PREFS: UiPrefs = {
@@ -125,4 +128,5 @@ export const DEFAULT_UI_PREFS: UiPrefs = {
   // translation works out of the box; users can still override both in Réglages
   libreTranslateUrl: 'https://translate.rlconseil.net',
   libreTranslateApiKey: '73d6bbf4-eaba-4bbf-ad82-d58f9ccba23d',
+  translateTarget: 'fr',
 };

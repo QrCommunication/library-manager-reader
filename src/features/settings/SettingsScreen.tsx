@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
+import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View, useColorScheme } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,6 +25,19 @@ const THEMES: { value: ThemeName; labelKey: string }[] = [
   // 'auto' is stored as-is in both stores; resolution to day/night happens at
   // render time (reader chrome, engine cssFor fallback), never in the stores
   { value: 'auto', labelKey: 'settings.theme.auto' },
+];
+
+// LibreTranslate server's supported languages (GET /languages); native names —
+// they read the same in every UI locale
+const TRANSLATE_TARGETS: { code: string; label: string }[] = [
+  { code: 'fr', label: 'Français' },
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Español' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'it', label: 'Italiano' },
+  { code: 'pt', label: 'Português' },
+  { code: 'he', label: 'עברית' },
+  { code: 'ar', label: 'العربية' },
 ];
 
 export function SettingsScreen() {
@@ -101,31 +114,24 @@ export function SettingsScreen() {
         })}
       </View>
 
-      <View style={[styles.infoRow, { borderColor: t0.border }]}>
-        <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.libreTranslateUrl')}</Text>
-        <TextInput
-          style={[styles.textInput, { borderColor: t0.border, color: t0.foreground }]}
-          value={prefs.libreTranslateUrl}
-          onChangeText={(v) => { void update({ libreTranslateUrl: v }); }}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          numberOfLines={1}
-          placeholderTextColor={t0.muted}
-        />
-      </View>
-      <View style={[styles.infoRow, { borderColor: t0.border }]}>
-        <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.libreTranslateApiKey')}</Text>
-        <TextInput
-          style={[styles.textInput, { borderColor: t0.border, color: t0.foreground }]}
-          value={prefs.libreTranslateApiKey}
-          onChangeText={(v) => { void update({ libreTranslateApiKey: v }); }}
-          autoCapitalize="none"
-          autoCorrect={false}
-          secureTextEntry
-          numberOfLines={1}
-          placeholderTextColor={t0.muted}
-        />
+      <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.translateTarget')}</Text>
+      <View style={styles.targetRow}>
+        {TRANSLATE_TARGETS.map((option) => {
+          const active = prefs.translateTarget === option.code;
+          return (
+            <Pressable
+              key={option.code}
+              style={[styles.targetChip, { borderColor: t0.accent }, active && { backgroundColor: t0.accent }]}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: active }}
+              onPress={() => { void update({ translateTarget: option.code }); }}
+            >
+              <Text style={[styles.targetChipText, { color: t0.accent }, active && { color: t0.onAccent, fontWeight: '600' }]}>
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       <View style={[styles.infoRow, { borderColor: t0.border }]}>
@@ -153,8 +159,9 @@ const styles = StyleSheet.create({
   themeRow: { flexDirection: 'row', gap: 8 },
   themeChip: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
   themeChipText: { fontSize: 14 },
+  targetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  targetChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
+  targetChipText: { fontSize: 14 },
   infoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1 },
   infoValue: { fontSize: 15, fontVariant: ['tabular-nums'] },
-  // flex:1 fills the row next to the label
-  textInput: { flex: 1, marginLeft: 12, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, height: 40 },
 });
