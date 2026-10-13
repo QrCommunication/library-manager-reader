@@ -4,6 +4,7 @@ declare module 'foliate-js/view.js' {
   export class View extends HTMLElement {
     constructor();
     open(book: Blob): Promise<void>;
+    init(opts: { lastLocation?: string; showTextStart?: boolean }): Promise<void>;
     goTo(target: string): Promise<unknown>;
     goToFraction(fraction: number): Promise<void>;
     prev(distance?: number): Promise<void>;
