@@ -5,9 +5,12 @@ import { ExtractionError, type MetadataPort } from '../reader/metadataPort';
 import { uuidV7 } from '../uuid';
 import type { BookFormat, OriginalFormat } from '../types';
 
-type BooksRepo = { createBook(input: Record<string, unknown> & { fileName: string }): Promise<{ id: string }> };
+type BooksRepo = {
+  createBook(input: Record<string, unknown> & { fileName: string }): Promise<{ id: string }>;
+  findDuplicate(key: { identifier: string | null; title: string | null; author: string | null }): Promise<{ id: string; title: string } | null>;
+};
 
-export type ImportReason = 'unsupported' | 'no_space' | 'parse_failed' | 'io_error';
+export type ImportReason = 'unsupported' | 'no_space' | 'parse_failed' | 'io_error' | 'duplicate';
 export type ImportOutcome =
   | { uri: string; ok: true; bookId: string }
   // detail carries the underlying error message: without it a device failure
@@ -65,6 +68,17 @@ async function importOne(uri: string, deps: ImportDeps): Promise<ImportOutcome> 
   try {
     await deps.fs.copy(uri, tmpPath);
     const extracted = await deps.extractor.extract({ path: tmpPath, format: original, size });
+    // duplicate detection needs the extracted identity, so it runs after
+    // extraction but before anything is written to its final home
+    const duplicate = await deps.books.findDuplicate({
+      identifier: extracted.metadata.identifier,
+      title: extracted.metadata.title,
+      author: extracted.metadata.author,
+    });
+    if (duplicate) {
+      await deps.fs.remove(tmpPath);
+      return { uri, ok: false, reason: 'duplicate', detail: duplicate.title };
+    }
     const format = STORED_EXT[original];
     const finalPath = deps.paths.bookPath(id, format);
     if (extracted.cbzBase64) {

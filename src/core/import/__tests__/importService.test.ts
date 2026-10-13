@@ -36,6 +36,7 @@ const baseDeps = (fs: ReturnType<typeof makeFs>, over: Record<string, unknown> =
   },
   books: {
     createBook: async (b: { fileName: string }) => ({ id: `book-${b.fileName}` }),
+    findDuplicate: async () => null,
   },
   extractor: {
     extract: async () => ({ metadata: { title: 'T', author: 'A', language: 'en', publisher: null, identifier: 'urn:isbn:1', series: null, seriesIndex: null }, coverJpegBase64: 'Y292ZXI=', cbzBase64: null }),
@@ -60,7 +61,7 @@ describe('runImport', () => {
         coverJpegBase64: null, cbzBase64: null,
       }),
     };
-    await runImport(['file:///x/Book.epub'], baseDeps(fs, { extractor, books: { createBook } }));
+    await runImport(['file:///x/Book.epub'], baseDeps(fs, { extractor, books: { createBook, findDuplicate: async () => null } }));
     expect(createBook.mock.calls[0]![0]).toMatchObject({ series: 'Fondation', seriesIndex: 3 });
   });
 
@@ -83,7 +84,7 @@ describe('runImport', () => {
     const fs = makeFs();
     const extractor = { extract: async () => ({ metadata: { title: 'C', author: null, language: null, publisher: null, identifier: null, series: null, seriesIndex: null }, coverJpegBase64: null, cbzBase64: 'aGk=' }) };
     const createBook = jest.fn(async (b: { format: string; originalFormat: string | null }) => ({ id: 'cbr-book' }));
-    const outcomes = await runImport(['file:///x/Comics.cbr'], baseDeps(fs, { extractor, books: { createBook } }));
+    const outcomes = await runImport(['file:///x/Comics.cbr'], baseDeps(fs, { extractor, books: { createBook, findDuplicate: async () => null } }));
     expect(outcomes[0]).toMatchObject({ ok: true, bookId: 'cbr-book' });
     expect(createBook.mock.calls[0]![0]).toMatchObject({ format: 'cbz', originalFormat: 'cbr', fileName: expect.stringMatching(/\.cbz$/) });
     expect(fs.files.get('/doc/covers/id-1.jpg') ?? fs.files.get('/doc/books/id-1.cbz')).toBeDefined();
@@ -122,7 +123,7 @@ describe('runImport', () => {
     // picked file size is the makeFs sentinel (1000); the converted cbz is 5 bytes
     const extractor = { extract: async () => ({ metadata: { title: 'C', author: null, language: null, publisher: null, identifier: null, series: null, seriesIndex: null }, coverJpegBase64: null, cbzBase64: 'aGVsbG8=' }) };
     const createBook = jest.fn(async (b: { fileSize: number }) => ({ id: 'cbr-book' }));
-    const outcomes = await runImport(['file:///x/Comics.cbr'], baseDeps(fs, { extractor, books: { createBook } }));
+    const outcomes = await runImport(['file:///x/Comics.cbr'], baseDeps(fs, { extractor, books: { createBook, findDuplicate: async () => null } }));
     expect(outcomes[0]).toMatchObject({ ok: true });
     expect(createBook.mock.calls[0]![0].fileSize).toBe(5);
     expect(createBook.mock.calls[0]![0].fileSize).not.toBe(1000);
@@ -131,7 +132,7 @@ describe('runImport', () => {
   it('recomputes fileSize from the stored copy for non-converted imports too', async () => {
     const fs = makeFs();
     const createBook = jest.fn(async (b: { fileSize: number }) => ({ id: 'epub-book' }));
-    const outcomes = await runImport(['file:///x/Book.epub'], baseDeps(fs, { books: { createBook } }));
+    const outcomes = await runImport(['file:///x/Book.epub'], baseDeps(fs, { books: { createBook, findDuplicate: async () => null } }));
     expect(outcomes[0]).toMatchObject({ ok: true });
     // stored copy size ('data' → 4), not the picked-file sentinel (1000)
     expect(createBook.mock.calls[0]![0].fileSize).toBe(4);
@@ -161,5 +162,42 @@ describe('runImport progress', () => {
     );
     expect(onProgress).toHaveBeenCalledTimes(2);
     expect(onProgress).toHaveBeenNthCalledWith(1, { done: 1, total: 2, uri: 'file:///x/NotSupported.pdf' });
+  });
+});
+
+describe('runImport duplicate detection', () => {
+  it('skips a book already in the library and creates no row or stored copy', async () => {
+    const fs = makeFs();
+    const createBook = jest.fn(async (b: { fileName: string }) => ({ id: `book-${b.fileName}` }));
+    const findDuplicate = jest.fn(async () => ({ id: 'existing', title: 'Dune' }));
+    const outcomes = await runImport(
+      ['file:///x/Book.epub'],
+      baseDeps(fs, { books: { createBook, findDuplicate } }),
+    );
+    expect(outcomes[0]).toMatchObject({ ok: false, reason: 'duplicate', detail: 'Dune' });
+    expect(createBook).not.toHaveBeenCalled();
+    expect(fs.files.has('/doc/books/id-1.epub')).toBe(false);
+    expect(fs.files.has('/doc/covers/id-1.jpg')).toBe(false);
+    expect([...fs.files.keys()].filter((k) => k.includes('.importing'))).toHaveLength(0);
+  });
+
+  it('passes the extracted identity (identifier, title, author) to the repo lookup', async () => {
+    const fs = makeFs();
+    const findDuplicate = jest.fn(async () => null);
+    await runImport(
+      ['file:///x/Book.epub'],
+      baseDeps(fs, { books: { createBook: async (b: { fileName: string }) => ({ id: `book-${b.fileName}` }), findDuplicate } }),
+    );
+    expect(findDuplicate).toHaveBeenCalledWith({ identifier: 'urn:isbn:1', title: 'T', author: 'A' });
+  });
+
+  it('imports a same-title book when the repo reports no duplicate', async () => {
+    const fs = makeFs();
+    const findDuplicate = jest.fn(async () => null);
+    const outcomes = await runImport(
+      ['file:///x/Book.epub'],
+      baseDeps(fs, { books: { createBook: async (b: { fileName: string }) => ({ id: `book-${b.fileName}` }), findDuplicate } }),
+    );
+    expect(outcomes[0]).toMatchObject({ ok: true });
   });
 });
