@@ -73,4 +73,16 @@ describe('useReaderSession', () => {
     expect(deps.calls).toContain('goTo:c7');
     expect(deps.calls).not.toContain('save');
   });
+
+  it('exposes the book language from the engine metadata (drives the TTS voice)', async () => {
+    const deps = makeDeps();
+    const base = deps.makeBridge();
+    deps.makeBridge = () => ({
+      ...base,
+      openBook: async () => ({ toc: [{ label: 'C1', target: 'h1' }], metadata: { title: 'T', author: null, language: 'fr' as string | null, publisher: null, identifier: null, coverJpegBase64: null } }),
+    } as typeof base);
+    const { result } = await renderHook(() => useReaderSession('b1', deps as never));
+    await waitFor(() => expect(result.current.state).toBe('ready'));
+    expect(result.current.language).toBe('fr');
+  });
 });
