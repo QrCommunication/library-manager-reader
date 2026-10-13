@@ -10,6 +10,7 @@ import { SUPPORTED_MIME } from '../../core/import/mime';
 import { formatBytes } from '../../core/format';
 import type { Book } from '../../core/types';
 import { themeTokens } from '../../theme/tokens';
+import { useWindowLayout } from '../../ui/windowClasses';
 import { BookGridItem } from './BookGridItem';
 import { ImportResultsSheet, type ImportOutcome } from './ImportResultsSheet';
 import { getHeadlessEngine } from '../../core/reader/headlessEngine';
@@ -29,6 +30,7 @@ export function LibraryScreen() {
   const [outcomes, setOutcomes] = useState<ImportOutcome[] | null>(null);
   const [menuBook, setMenuBook] = useState<Book | null>(null);
   const { books, refresh } = useBooks(sort, query);
+  const { columns } = useWindowLayout();
 
   const addBooks = async () => {
     const result = await DocumentPicker.getDocumentAsync({ multiple: true, type: [...SUPPORTED_MIME], copyToCacheDirectory: true });
@@ -92,7 +94,10 @@ export function LibraryScreen() {
       ) : (
         <FlatList
           data={books}
-          numColumns={2}
+          // key remounts the list when the column count changes (fold/rotate):
+          // FlatList forbids numColumns mutations for a mounted instance
+          key={`grid-${columns}`}
+          numColumns={columns}
           keyExtractor={(b) => b.id}
           renderItem={({ item }) => (
             <BookGridItem

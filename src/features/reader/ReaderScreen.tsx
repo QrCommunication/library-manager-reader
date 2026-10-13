@@ -12,6 +12,7 @@ import { TypographyPanel } from './TypographyPanel';
 import { useReaderSettingsStore } from '../settings/readerSettingsStore';
 import type { ReaderBridge } from '../../core/reader/bridge';
 import { themeTokens } from '../../theme/tokens';
+import { useWindowLayout } from '../../ui/windowClasses';
 
 type PanelName = 'toc' | 'bookmarks' | 'typography';
 
@@ -21,6 +22,8 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
   const router = useRouter();
   const { settings, update } = useReaderSettingsStore();
   const { state, errorKind, title, fraction, toc, bridge, retry } = useReaderSession(bookId);
+  const { panel: panelSurface } = useWindowLayout();
+  const sideDrawer = panelSurface === 'side';
   const [chromeVisible, setChromeVisible] = useState(false);
   const [panel, setPanel] = useState<PanelName | null>(null);
   const closePanel = () => setPanel(null);
@@ -97,9 +100,9 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
       ) : null}
       {panel ? (
         <Modal transparent visible animationType="slide" onRequestClose={closePanel}>
-          <View style={styles.backdrop}>
+          <View style={[styles.backdrop, sideDrawer && styles.backdropSide]}>
             <Pressable style={styles.backdropPress} onPress={closePanel} accessibilityLabel={t('common.cancel')} />
-            <View style={styles.drawer}>
+            <View style={[styles.drawer, sideDrawer ? styles.drawerSide : styles.drawerBottom]}>
               {panel === 'toc' ? <TocPanel toc={toc} onNavigate={navigateFromPanel} /> : null}
               {panel === 'bookmarks' ? (
                 <BookmarksPanel bookId={bookId} bridge={reader} onNavigate={navigateFromPanel} />
@@ -143,10 +146,18 @@ const styles = StyleSheet.create({
   },
   percent: { minWidth: 44, textAlign: 'right' },
   backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#00000055' },
+  backdropSide: { flexDirection: 'row', justifyContent: 'flex-end' },
   backdropPress: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   drawer: {
-    maxHeight: '70%', backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    backgroundColor: '#FFFFFF',
     paddingTop: 8, paddingBottom: 16, minHeight: 120,
+  },
+  drawerBottom: {
+    maxHeight: '70%',
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+  },
+  drawerSide: {
+    width: 400, maxWidth: '85%', height: '100%',
+    borderTopLeftRadius: 16, borderBottomLeftRadius: 16,
   },
 });
