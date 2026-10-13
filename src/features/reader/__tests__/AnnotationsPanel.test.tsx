@@ -12,7 +12,7 @@ const makeServices = async () => {
   await migrate(db);
   const services = createServices({ db, fs: fakeFs(), root: '/doc', newId: (() => { let i = 0; return () => `id-${++i}`; })() });
   // seed the book row: annotations.book_id has a foreign key on books.id
-  await services.books.createBook({ id: 'b1', title: 'T', author: null, format: 'epub', originalFormat: null, fileName: 't.epub', fileSize: 1, language: null, publisher: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+  await services.books.createBook({ id: 'b1', title: 'T', author: null, format: 'epub', originalFormat: null, fileName: 't.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
   await services.annotations.add({ id: 'a-1', bookId: 'b1', cfi: 'cfi-1', color: 'yellow', note: null, excerpt: 'Extrait de test', createdAt: 1 });
   return services;
 };

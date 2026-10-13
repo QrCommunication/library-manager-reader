@@ -105,6 +105,8 @@ describe('migrate', () => {
       file_size: 1234,
       language: 'en',
       publisher: 'Penguin',
+      series: null,
+      series_index: null,
       drm_identifier: null,
       added_at: t,
       updated_at: t,
@@ -131,6 +133,40 @@ describe('migrate', () => {
 
     // the v2 annotations table now exists and is queryable
     await expect(db.all('SELECT * FROM annotations')).resolves.toEqual([]);
+  });
+
+  it('upgrades a v2 database to v3 adding series columns and preserving rows', async () => {
+    const db = makeDb();
+    // existing v2 install: v1 schema, then migrate() applies the v2 step
+    await db.exec(V1_SCHEMA);
+    await db.exec('PRAGMA user_version = 1;');
+    await migrate(db);
+    const t = 1700000000000;
+    await db.run(
+      'INSERT INTO books (id,title,author,format,original_format,file_name,file_size,language,publisher,drm_identifier,added_at,updated_at,deleted_at,last_read_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      ['bk1', 'Moby Dick', 'Herman Melville', 'epub', null, 'moby.epub', 1234, 'en', 'Penguin', null, t, t, null, null],
+    );
+
+    await migrate(db);
+
+    const version = await db.get<{ user_version: number }>('PRAGMA user_version');
+    expect(version?.user_version).toBe(CURRENT_SCHEMA_VERSION);
+
+    // legacy row survives with a NULL series; the new columns are queryable
+    await expect(db.get('SELECT * FROM books WHERE id = ?', ['bk1'])).resolves.toMatchObject({
+      id: 'bk1',
+      title: 'Moby Dick',
+      series: null,
+      series_index: null,
+    });
+    await db.run(
+      'INSERT INTO books (id,title,author,format,original_format,file_name,file_size,language,publisher,series,series_index,drm_identifier,added_at,updated_at,deleted_at,last_read_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      ['bk2', 'Fondation', 'Isaac Asimov', 'epub', null, 'f.epub', 2000, 'fr', 'Hachette', 'Fondation', 1, null, t, t, null, null],
+    );
+    await expect(db.get('SELECT series, series_index FROM books WHERE id = ?', ['bk2'])).resolves.toEqual({
+      series: 'Fondation',
+      series_index: 1,
+    });
   });
 
   it('enables foreign keys with cascade delete', async () => {

@@ -67,7 +67,7 @@ export function createHeadlessExtractor(
         return;
       }
       if (msg.type === 'extractResult' && pending && msg.requestId === pending.requestId) {
-        if (msg.ok) pending.resolve({ metadata: { title: msg.metadata.title, author: msg.metadata.author, language: msg.metadata.language, publisher: msg.metadata.publisher, identifier: msg.metadata.identifier }, coverJpegBase64: msg.metadata.coverJpegBase64, cbzBase64: msg.cbzBase64 });
+        if (msg.ok) pending.resolve({ metadata: { title: msg.metadata.title, author: msg.metadata.author, language: msg.metadata.language, publisher: msg.metadata.publisher, identifier: msg.metadata.identifier, series: msg.metadata.series, seriesIndex: msg.metadata.seriesIndex }, coverJpegBase64: msg.metadata.coverJpegBase64, cbzBase64: msg.cbzBase64 });
         else pending.reject(new ExtractionError(msg.error));
         pending = null;
       }

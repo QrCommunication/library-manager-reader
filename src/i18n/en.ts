@@ -10,6 +10,7 @@ export const en = {
       recent: 'Recent',
       added: 'Recently added',
       title: 'Title',
+      series: 'Series',
     },
     menu: {
       open: 'Open',

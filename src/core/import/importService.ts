@@ -93,6 +93,8 @@ async function importOne(uri: string, deps: ImportDeps): Promise<ImportOutcome> 
       fileSize: storedSize,
       language: extracted.metadata.language,
       publisher: extracted.metadata.publisher,
+      series: extracted.metadata.series,
+      seriesIndex: extracted.metadata.seriesIndex,
       drmIdentifier: extracted.metadata.identifier,
       addedAt: Date.now(),
       updatedAt: Date.now(),

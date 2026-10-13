@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -18,7 +18,7 @@ import { ImportResultsSheet, type ImportOutcome } from './ImportResultsSheet';
 import { getHeadlessEngine } from '../../core/reader/headlessEngine';
 import { seedIfEmpty } from '../../dev/seed';
 
-const SORTS: SortKey[] = ['recent', 'added', 'title'];
+const SORTS: SortKey[] = ['recent', 'added', 'title', 'series'];
 
 export function LibraryScreen() {
   const { t, i18n } = useTranslation();
@@ -32,11 +32,12 @@ export function LibraryScreen() {
   const lang = i18n.language === 'fr' ? 'fr' : 'en';
   const [sort, setSort] = useState<SortKey>('recent');
   const [query, setQuery] = useState('');
+  const [seriesFilter, setSeriesFilter] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [outcomes, setOutcomes] = useState<ImportOutcome[] | null>(null);
   const [menuBook, setMenuBook] = useState<Book | null>(null);
-  const { books, refresh } = useBooks(sort, query);
+  const { books, seriesList, refresh } = useBooks(sort, query, seriesFilter);
   const { columns } = useWindowLayout();
 
   const addBooks = async () => {
@@ -115,6 +116,28 @@ export function LibraryScreen() {
           </Pressable>
         ))}
       </View>
+      {seriesList.length > 0 ? (
+        // horizontal chips: tap filters the grid to that series, tap again clears
+        <View style={styles.seriesRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.seriesRowContent}>
+            {seriesList.map((s) => (
+              <Pressable
+                key={s.name}
+                onPress={() => setSeriesFilter((cur) => (cur === s.name ? null : s.name))}
+                style={[
+                  styles.sortChip,
+                  { borderColor: t0.border },
+                  seriesFilter === s.name && { backgroundColor: t0.accent, borderColor: t0.accent },
+                ]}
+              >
+                <Text style={[styles.sortChipText, { color: seriesFilter === s.name ? t0.onAccent : t0.foreground }]}>
+                  {`${s.name} (${s.count})`}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
       {importing && progress ? (
         <View style={[styles.importBanner, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
           <Text style={[styles.importText, { color: t0.foreground }]}>
@@ -204,6 +227,8 @@ const styles = StyleSheet.create({
   search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 42, marginBottom: 10 },
   searchInput: { flex: 1, fontSize: 15, paddingVertical: 0 },
   sortRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+  seriesRow: { marginBottom: 4 },
+  seriesRowContent: { flexDirection: 'row', gap: 8, paddingRight: 16 },
   importBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, height: 42, marginBottom: 10,

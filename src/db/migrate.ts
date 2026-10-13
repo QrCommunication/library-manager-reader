@@ -1,6 +1,6 @@
 import type { DbDriver } from './driver';
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -58,6 +58,10 @@ const MIGRATIONS: Record<number, string> = {
       deleted_at INTEGER
     );
     CREATE INDEX idx_annotations_book ON annotations(book_id, deleted_at);
+  `,
+  3: `
+    ALTER TABLE books ADD COLUMN series TEXT;
+    ALTER TABLE books ADD COLUMN series_index REAL;
   `,
 };
 

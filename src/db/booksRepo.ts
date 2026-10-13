@@ -4,13 +4,15 @@ import type { Book, BookFormat, NewBook, OriginalFormat } from '../core/types';
 interface BookRow {
   id: string; title: string; author: string | null; format: string; original_format: string | null;
   file_name: string; file_size: number; language: string | null; publisher: string | null;
+  series: string | null; series_index: number | null;
   drm_identifier: string | null; added_at: number; updated_at: number; deleted_at: number | null; last_read_at: number | null;
 }
 
 const rowToBook = (r: BookRow): Book => ({
   id: r.id, title: r.title, author: r.author, format: r.format as BookFormat,
   originalFormat: r.original_format as OriginalFormat | null, fileName: r.file_name, fileSize: r.file_size,
-  language: r.language, publisher: r.publisher, drmIdentifier: r.drm_identifier,
+  language: r.language, publisher: r.publisher, series: r.series, seriesIndex: r.series_index,
+  drmIdentifier: r.drm_identifier,
   addedAt: r.added_at, updatedAt: r.updated_at, deletedAt: r.deleted_at, lastReadAt: r.last_read_at,
 });
 
@@ -23,15 +25,17 @@ export function createBooksRepo(db: DbDriver, newId: () => string) {
         author: input.author ?? null,
         language: input.language ?? null,
         publisher: input.publisher ?? null,
+        series: input.series ?? null,
+        seriesIndex: input.seriesIndex ?? null,
         drmIdentifier: input.drmIdentifier ?? null,
         originalFormat: input.originalFormat ?? null,
         deletedAt: null,
         lastReadAt: null,
       };
       await db.run(
-        `INSERT INTO books (id,title,author,format,original_format,file_name,file_size,language,publisher,drm_identifier,added_at,updated_at,deleted_at,last_read_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [b.id, b.title, b.author, b.format, b.originalFormat, b.fileName, b.fileSize, b.language, b.publisher, b.drmIdentifier, b.addedAt, b.updatedAt, b.deletedAt, b.lastReadAt],
+        `INSERT INTO books (id,title,author,format,original_format,file_name,file_size,language,publisher,series,series_index,drm_identifier,added_at,updated_at,deleted_at,last_read_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [b.id, b.title, b.author, b.format, b.originalFormat, b.fileName, b.fileSize, b.language, b.publisher, b.series, b.seriesIndex, b.drmIdentifier, b.addedAt, b.updatedAt, b.deletedAt, b.lastReadAt],
       );
       return b;
     },
@@ -39,11 +43,13 @@ export function createBooksRepo(db: DbDriver, newId: () => string) {
       const row = await db.get<BookRow>('SELECT * FROM books WHERE id = ?', [id]);
       return row ? rowToBook(row) : null;
     },
-    async listBooks(opts: { sort: 'recent' | 'added' | 'title'; query?: string }): Promise<Book[]> {
+    async listBooks(opts: { sort: 'recent' | 'added' | 'title' | 'series'; query?: string; series?: string }): Promise<Book[]> {
       const order = {
         recent: 'ORDER BY COALESCE(last_read_at, added_at) DESC, title COLLATE NOCASE ASC',
         added: 'ORDER BY added_at DESC',
         title: 'ORDER BY title COLLATE NOCASE ASC',
+        // tome order within a series; series-less books grouped last
+        series: 'ORDER BY (series IS NULL) ASC, series COLLATE NOCASE ASC, (series_index IS NULL) ASC, series_index ASC, title COLLATE NOCASE ASC',
       }[opts.sort];
       const where = ['deleted_at IS NULL'];
       const params: unknown[] = [];
@@ -54,8 +60,18 @@ export function createBooksRepo(db: DbDriver, newId: () => string) {
         const like = `%${opts.query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
         params.push(like, like);
       }
+      if (opts.series) {
+        where.push('series = ?');
+        params.push(opts.series);
+      }
       const rows = await db.all<BookRow>(`SELECT * FROM books WHERE ${where.join(' AND ')} ${order}`, params);
       return rows.map(rowToBook);
+    },
+    async listSeries(): Promise<{ name: string; count: number }[]> {
+      const rows = await db.all<{ series: string; n: number }>(
+        'SELECT series, COUNT(*) AS n FROM books WHERE deleted_at IS NULL AND series IS NOT NULL GROUP BY series ORDER BY series COLLATE NOCASE ASC',
+      );
+      return rows.map((r) => ({ name: r.series, count: r.n }));
     },
     async markDeleted(id: string, at: number): Promise<void> {
       await db.run('UPDATE books SET deleted_at = ?, updated_at = ? WHERE id = ?', [at, at, id]);

@@ -38,7 +38,7 @@ const baseDeps = (fs: ReturnType<typeof makeFs>, over: Record<string, unknown> =
     createBook: async (b: { fileName: string }) => ({ id: `book-${b.fileName}` }),
   },
   extractor: {
-    extract: async () => ({ metadata: { title: 'T', author: 'A', language: 'en', publisher: null, identifier: 'urn:isbn:1' }, coverJpegBase64: 'Y292ZXI=', cbzBase64: null }),
+    extract: async () => ({ metadata: { title: 'T', author: 'A', language: 'en', publisher: null, identifier: 'urn:isbn:1', series: null, seriesIndex: null }, coverJpegBase64: 'Y292ZXI=', cbzBase64: null }),
   },
   newId: (() => { let n = 0; return () => `id-${++n}`; })(),
   ...over,
@@ -49,6 +49,19 @@ describe('runImport', () => {
     const fs = makeFs();
     const outcomes = await runImport(['file:///x/Book.epub'], baseDeps(fs));
     expect(outcomes[0]).toMatchObject({ ok: true });
+  });
+
+  it('records the series metadata into the book row', async () => {
+    const fs = makeFs();
+    const createBook = jest.fn(async (b: { fileName: string }) => ({ id: `book-${b.fileName}` }));
+    const extractor = {
+      extract: async () => ({
+        metadata: { title: 'T', author: 'A', language: 'en', publisher: null, identifier: null, series: 'Fondation', seriesIndex: 3 },
+        coverJpegBase64: null, cbzBase64: null,
+      }),
+    };
+    await runImport(['file:///x/Book.epub'], baseDeps(fs, { extractor, books: { createBook } }));
+    expect(createBook.mock.calls[0]![0]).toMatchObject({ series: 'Fondation', seriesIndex: 3 });
   });
 
   it('rejects unsupported extensions without calling the extractor', async () => {
@@ -68,7 +81,7 @@ describe('runImport', () => {
 
   it('imports cbr by writing the converted cbz and recording originalFormat', async () => {
     const fs = makeFs();
-    const extractor = { extract: async () => ({ metadata: { title: 'C', author: null, language: null, publisher: null, identifier: null }, coverJpegBase64: null, cbzBase64: 'aGk=' }) };
+    const extractor = { extract: async () => ({ metadata: { title: 'C', author: null, language: null, publisher: null, identifier: null, series: null, seriesIndex: null }, coverJpegBase64: null, cbzBase64: 'aGk=' }) };
     const createBook = jest.fn(async (b: { format: string; originalFormat: string | null }) => ({ id: 'cbr-book' }));
     const outcomes = await runImport(['file:///x/Comics.cbr'], baseDeps(fs, { extractor, books: { createBook } }));
     expect(outcomes[0]).toMatchObject({ ok: true, bookId: 'cbr-book' });
@@ -107,7 +120,7 @@ describe('runImport', () => {
   it('records the STORED cbz size for a converted cbr, not the picked size', async () => {
     const fs = makeFs();
     // picked file size is the makeFs sentinel (1000); the converted cbz is 5 bytes
-    const extractor = { extract: async () => ({ metadata: { title: 'C', author: null, language: null, publisher: null, identifier: null }, coverJpegBase64: null, cbzBase64: 'aGVsbG8=' }) };
+    const extractor = { extract: async () => ({ metadata: { title: 'C', author: null, language: null, publisher: null, identifier: null, series: null, seriesIndex: null }, coverJpegBase64: null, cbzBase64: 'aGVsbG8=' }) };
     const createBook = jest.fn(async (b: { fileSize: number }) => ({ id: 'cbr-book' }));
     const outcomes = await runImport(['file:///x/Comics.cbr'], baseDeps(fs, { extractor, books: { createBook } }));
     expect(outcomes[0]).toMatchObject({ ok: true });

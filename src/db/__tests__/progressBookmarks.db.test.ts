@@ -11,7 +11,7 @@ const setup = async () => {
   const books = createBooksRepo(db, () => 'fixed-book-id');
   await books.createBook({
     title: 'T', author: null, format: 'epub', originalFormat: null, fileName: 't.epub',
-    fileSize: 1, language: null, publisher: null, drmIdentifier: null,
+    fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null,
     addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null,
   });
   let n = 0;

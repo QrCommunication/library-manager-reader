@@ -303,6 +303,35 @@ describe('engine extracts metadata headlessly via makeBook (never the renderer)'
     expect(mockInitCalls).toBe(0);
   });
 
+  it('extract epub: carries the calibre/EPUB3 series name and tome position into flat metadata', async () => {
+    // EPUB3 belongs-to-collection shape (foliate: belongsTo.series array)…
+    mockMakeBook.mockImplementation(async () => ({
+      metadata: {
+        title: 'T1', author: null, language: ['fr'],
+        belongsTo: { series: [{ name: { en: 'Fondation' }, position: '3' }] },
+      },
+    }));
+    feed({ type: 'extract', requestId: 'r10', format: 'epub', size: 1 });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    expect(posted.find((m) => m.type === 'extractResult')).toMatchObject({
+      metadata: { series: 'Fondation', seriesIndex: 3 },
+    });
+    // …and the calibre legacy meta shape (single object, numeric position)
+    mockMakeBook.mockImplementation(async () => ({
+      metadata: {
+        title: 'T2', author: null, language: ['fr'],
+        belongsTo: { series: { name: 'Dune', position: 2 } },
+      },
+    }));
+    feed({ type: 'extract', requestId: 'r11', format: 'epub', size: 1 });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    expect(posted.find((m) => m.type === 'extractResult' && (m as { requestId?: string }).requestId === 'r11')).toMatchObject({
+      metadata: { series: 'Dune', seriesIndex: 2 },
+    });
+  });
+
   it('extract cbr: converts to cbz and hands makeBook a File named book.cbz', async () => {
     mockMakeBook.mockImplementation(async () => ({ metadata: {} }));
     feed({ type: 'extract', requestId: 'r2', format: 'cbr', size: 1 });
