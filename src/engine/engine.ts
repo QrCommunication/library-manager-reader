@@ -1,9 +1,12 @@
 import { PROTOCOL_VERSION, type AppToEngine, type EngineToApp } from '../core/bridge/protocol';
 import { View } from 'foliate-js/view.js';
 import { Overlayer } from 'foliate-js/overlayer.js';
+import { TTS } from 'foliate-js/tts.js';
+import { textWalker } from 'foliate-js/text-walker.js';
 import { createChunkAssembler } from './chunkAssembler';
 import { convertCbrToCbz } from './extractMode';
 import { fractionForSection } from './searchFraction';
+import { ssmlToText } from './ssml';
 import { createExtractorFromData } from 'node-unrar-js';
 import { zipSync, strToU8 } from 'fflate';
 import type { HighlightColor, OriginalFormat, ReaderSettings, TocItem } from '../core/types';
@@ -129,6 +132,55 @@ const queueSelection = (doc: Document, index: number): void => {
   selectionTimer = setTimeout(() => { selectionTimer = null; sendSelection(doc, index); }, 200);
 };
 
+// TTS pipeline: the engine owns sentence segmentation via foliate's TTS class;
+// the RN side (Task 13/15) only speaks the text that arrives. V1.x ruling: TTS
+// covers the CURRENT SECTION only — foliate returns undefined at section end,
+// which the engine turns into a single '' end-of-stream marker; no auto-advance
+// to the next section.
+let tts: InstanceType<typeof TTS> | null = null;
+let ttsRange: Range | null = null;
+let ttsEmitting = false;
+
+// CFI of the sentence currently highlighted by foliate's TTS (fed by the
+// highlight callback below); null whenever the range is not in the view
+const ttsCurrentCfi = (): string | null => {
+  if (!ttsRange) return null;
+  const contents = view.renderer.getContents();
+  const first = contents[0];
+  if (!first) return null;
+  try { return view.getCFI(first.index, ttsRange); } catch { return null; }
+};
+
+const ttsEmit = (step: 'start' | 'next'): void => {
+  if (!tts || ttsEmitting) return;
+  ttsEmitting = true;
+  try {
+    // next(true): foliate calls our highlight callback with the sentence range
+    // → ttsRange → CFI of the sentence now being spoken
+    const ssml = step === 'start' ? tts.start() : tts.next(true);
+    if (ssml == null) {
+      // section exhausted: tear down and end the stream (RN stops calling next)
+      tts = null;
+      ttsRange = null;
+      send({ type: 'ttsSentence', text: '', cfi: null }); // fin de flux
+    } else {
+      send({ type: 'ttsSentence', text: ssmlToText(ssml), cfi: ttsCurrentCfi() });
+    }
+  } finally {
+    ttsEmitting = false;
+  }
+};
+
+const ttsStartAt = async (cfi: string | null): Promise<void> => {
+  if (cfi) { try { await view.goTo(cfi); } catch { /* position par défaut */ } }
+  const contents = view.renderer.getContents();
+  const first = contents[0];
+  if (!first?.doc) { send({ type: 'ttsSentence', text: '', cfi: null }); return; }
+  ttsRange = null;
+  tts = new TTS(first.doc, textWalker, (range: Range) => { ttsRange = range.cloneRange(); }, 'sentence');
+  ttsEmit('start');
+};
+
 view.addEventListener('load', (e: Event) => {
   documentLoaded = true;
   // 'load' fires per section display (and per book open): a selection debounce
@@ -136,6 +188,10 @@ view.addEventListener('load', (e: Event) => {
   // queued highlight replay belongs to the previous layout as well
   if (selectionTimer) { clearTimeout(selectionTimer); selectionTimer = null; }
   if (highlightReplayTimer) { clearTimeout(highlightReplayTimer); highlightReplayTimer = null; }
+  // TTS state is bound to the section doc that produced it: a pending instance
+  // or highlight range must not leak into the freshly loaded section doc
+  tts = null;
+  ttsRange = null;
   // installed foliate View emits 'load' with { doc, index }; toc/metadata live on view.book
   const detail = (e as CustomEvent).detail as { doc?: Document; index?: number } | undefined;
   bookLanguage = view.book?.metadata?.language ?? null;
@@ -427,6 +483,13 @@ async function handle(msg: AppToEngine): Promise<void> {
       searchToken++;
       try { view.clearSearch(); } catch { /* pas encore chargé */ }
       break;
+    case 'ttsStart':
+      // awaited (not a floating IIFE) so unexpected failures surface as one
+      // engineError through the dispatcher, like every other handler
+      await ttsStartAt(msg.cfi);
+      break;
+    case 'ttsNext': ttsEmit('next'); break;
+    case 'ttsStop': tts = null; ttsRange = null; break;
     default: break;
   }
 }
@@ -435,11 +498,14 @@ async function handle(msg: AppToEngine): Promise<void> {
 // sanctioned quiet no-ops (T15/T21): foliate throws on an unloaded book and the
 // app legitimately probes while chunks stream. 'copySelection' likewise needs a
 // loaded doc (it walks renderer.getContents()), and search/searchCancel touch
-// view.search/view.clearSearch which require an open book. Anything ELSE that
+// view.search/view.clearSearch which require an open book; ttsStart builds a
+// TTS over the section doc and ttsNext steps an existing instance, so both need
+// the load too. 'ttsStop' stays OUT of the allowlist per the Task 14 brief:
+// nulling the (null) TTS state pre-load is a safe no-op. Anything ELSE that
 // throws is a genuine failure (size/protocol mismatch, null assembler…) and
 // must reach the app as an engineError instead of being swallowed into an
 // invisible hang.
-const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'copySelection', 'addHighlight', 'removeHighlight', 'search', 'searchCancel']);
+const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'copySelection', 'addHighlight', 'removeHighlight', 'search', 'searchCancel', 'ttsStart', 'ttsNext']);
 
 onAppMessage((msg) => {
   void (async () => {

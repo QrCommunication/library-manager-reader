@@ -43,3 +43,18 @@ declare module 'foliate-js/overlayer.js' {
     constructor(doc: Document);
   }
 }
+
+declare module 'foliate-js/tts.js' {
+  export class TTS {
+    constructor(doc: Document, textWalker: unknown, highlight: (range: Range) => void, granularity: string);
+    start(): string | undefined;
+    resume(): string | undefined;
+    next(paused: boolean): string | undefined;
+    prev(paused: boolean): string | undefined;
+    doc?: Document;
+  }
+}
+
+declare module 'foliate-js/text-walker.js' {
+  export const textWalker: unknown;
+}
