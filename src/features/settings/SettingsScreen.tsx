@@ -36,7 +36,7 @@ export function SettingsScreen() {
     let cancelled = false;
     void services.fs.directorySize(services.paths.booksDir).then((n) => {
       if (!cancelled) setStorageBytes(n);
-    });
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, [services]);
 

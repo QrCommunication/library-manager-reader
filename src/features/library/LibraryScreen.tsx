@@ -39,6 +39,8 @@ export function LibraryScreen() {
         fs: services.fs, paths: services.paths, books: services.books, extractor,
       });
       setOutcomes(results);
+    } catch (err) {
+      console.warn('[library] import failed', err);
     } finally {
       setImporting(false);
       await refresh();

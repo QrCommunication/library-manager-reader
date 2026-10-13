@@ -45,7 +45,7 @@ export function BookmarksPanel({ bookId, bridge, onNavigate }: {
   };
 
   const remove = async (id: string) => {
-    await bookmarks.markDeleted(id, Date.now());
+    await bookmarks.markDeleted(id, Date.now()).catch(() => {});
     await reload();
   };
 

@@ -23,7 +23,7 @@ export class ReaderBridge {
 
   handleRaw(raw: string): void {
     const msg = parseMessage(raw);
-    if (msg.type === 'unknown') return;
+    if (msg.type === 'unknown') { console.warn('[bridge] unknown engine message', raw); return; }
     this.handle(msg);
   }
 

@@ -56,7 +56,7 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
 
   return (
     <View style={[styles.root, { backgroundColor: themeTokens(settings.theme).background }]}>
-      <EngineWebView bridge={reader} onFatal={retry} />
+      <EngineWebView bridge={reader} onFatal={retry} onReload={retry} />
       <View style={styles.overlay} pointerEvents="box-none">
         <Pressable style={styles.zoneSide} pointerEvents="box-only" onPress={() => reader.prev()} />
         <Pressable style={styles.zoneCenter} pointerEvents="box-only" onPress={() => setChromeVisible((v) => !v)} />

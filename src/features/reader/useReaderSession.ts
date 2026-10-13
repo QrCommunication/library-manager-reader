@@ -72,10 +72,13 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
   const [title, setTitle] = useState<string | null>(null);
   const [fraction, setFraction] = useState(0);
   const bridgeRef = useRef<BridgeLike | null>(null);
+  // survives unmount/retry so a post-crash reload reopens at the last known spot
+  const lastKnownRef = useRef<{ bookId: string; cfi: string | null; fraction: number; sectionIndex: number | null } | null>(null);
   const [nonce, setNonce] = useState(0);
   const retry = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
+    setState('loading');
     let cancelled = false;
     const deps = depsOverride ?? defaultDeps;
     if (!deps) return;
@@ -93,6 +96,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
       offProgress = bridge.onProgress((p) => {
         const f = Math.min(1, Math.max(0, p.fraction));
         latest = { cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex };
+        lastKnownRef.current = { bookId, cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex };
         setFraction(f);
         if (Date.now() - lastSave > 1000) { lastSave = Date.now(); void deps.saveProgress({ cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex }); void deps.touchLastRead(); }
       });
@@ -101,7 +105,11 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
         const loaded = await bridge.openBook({ format: book.format, path: deps.bookPath(book.fileName), size: book.fileSize });
         bridge.applySettings(useReaderSettingsStore.getState().settings);
         const prog = await deps.getProgress(bookId);
-        if (prog?.cfi) bridge.goTo(prog.cfi);
+        const lastKnown = lastKnownRef.current?.bookId === bookId ? lastKnownRef.current : null;
+        if (lastKnown) {
+          if (lastKnown.cfi) bridge.goTo(lastKnown.cfi);
+          else bridge.goToFraction(lastKnown.fraction);
+        } else if (prog?.cfi) bridge.goTo(prog.cfi);
         else if (prog) bridge.goToFraction(prog.fraction);
         if (!cancelled) { setToc(loaded.toc); setTitle(book.title); setState('ready'); }
       } catch {

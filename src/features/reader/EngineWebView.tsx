@@ -5,7 +5,7 @@ import { buildEngineHtml } from '../../engine/engineHtml';
 import { bridgeTarget } from './useReaderSession';
 import type { ReaderBridge } from '../../core/reader/bridge';
 
-export function EngineWebView({ bridge, onFatal }: { bridge: ReaderBridge; onFatal(): void }) {
+export function EngineWebView({ bridge, onFatal, onReload }: { bridge: ReaderBridge; onFatal(): void; onReload(): void }) {
   const ref = useRef<WebView>(null);
   const reloads = useRef(0);
 
@@ -18,7 +18,7 @@ export function EngineWebView({ bridge, onFatal }: { bridge: ReaderBridge; onFat
   // WebViewRenderProcessGoneEvent isn't exported by react-native-webview's typings,
   // so the handler takes no argument; it fits both onRenderProcessGone and onError.
   const onGone = () => {
-    if (reloads.current < 1) { reloads.current += 1; ref.current?.reload(); }
+    if (reloads.current < 1) { reloads.current += 1; ref.current?.reload(); onReload(); }
     else onFatal();
   };
 
