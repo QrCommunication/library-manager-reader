@@ -3,6 +3,7 @@ import { View } from 'foliate-js/view.js';
 import { Overlayer } from 'foliate-js/overlayer.js';
 import { createChunkAssembler } from './chunkAssembler';
 import { convertCbrToCbz } from './extractMode';
+import { fractionForSection } from './searchFraction';
 import { createExtractorFromData } from 'node-unrar-js';
 import { zipSync, strToU8 } from 'fflate';
 import type { HighlightColor, OriginalFormat, ReaderSettings, TocItem } from '../core/types';
@@ -156,10 +157,30 @@ view.addEventListener('load', (e: Event) => {
   });
 });
 
+// Full-book search over foliate's async search generator, which streams
+// {progress} / {label, subitems} / {cfi, excerpt} then 'done'. Results are
+// capped and token-guarded: every new search (and searchCancel) bumps
+// searchToken, so a superseded iteration stops emitting and drops its
+// searchDone — the app receives exactly one searchDone per accepted search.
+const SEARCH_RESULT_CAP = 200;
+let searchToken = 0;
+// approximate per-section fraction for the result list, fed by relocate below
+let sectionCount = 0;
+
+// foliate exposes no per-CFI fraction: resolve the hit's section index and
+// report its midpoint position (pure math in searchFraction.ts), 0 on failure
+const fractionForCfi = async (cfi: string): Promise<number> => {
+  try {
+    const { index } = await view.resolveNavigation(cfi);
+    return fractionForSection(index, sectionCount);
+  } catch { return 0; }
+};
+
 view.addEventListener('relocate', (e: Event) => {
   const d = (e as CustomEvent).detail;
   lastFraction = d?.fraction ?? lastFraction;
   // installed foliate relocate detail has section: { current, total }
+  sectionCount = d?.section?.total ?? sectionCount;
   send({ type: 'progress', cfi: d?.cfi ?? null, fraction: d?.fraction ?? 0, sectionIndex: d?.section?.current ?? null });
 });
 
@@ -376,6 +397,36 @@ async function handle(msg: AppToEngine): Promise<void> {
       view.deleteAnnotation(rec.annotation).catch(() => { /* pas affiché */ });
       break;
     }
+    case 'search': {
+      const token = ++searchToken;
+      void (async () => {
+        let count = 0;
+        try {
+          for await (const result of view.search({ query: msg.query })) {
+            if (token !== searchToken) return;
+            if (result === 'done') break;
+            if ('subitems' in result && result.subitems) {
+              for (const item of result.subitems) {
+                if (count >= SEARCH_RESULT_CAP) break;
+                send({ type: 'searchResult', cfi: item.cfi, excerpt: item.excerpt, fraction: await fractionForCfi(item.cfi) });
+                count++;
+              }
+            } else if ('cfi' in result && result.cfi) {
+              if (count >= SEARCH_RESULT_CAP) break;
+              send({ type: 'searchResult', cfi: result.cfi, excerpt: result.excerpt, fraction: await fractionForCfi(result.cfi) });
+              count++;
+            }
+            if (count >= SEARCH_RESULT_CAP) break;
+          }
+        } catch (e) { console.log('[engine] search error', e); }
+        if (token === searchToken) send({ type: 'searchDone', count });
+      })();
+      break;
+    }
+    case 'searchCancel':
+      searchToken++;
+      try { view.clearSearch(); } catch { /* pas encore chargé */ }
+      break;
     default: break;
   }
 }
@@ -383,10 +434,12 @@ async function handle(msg: AppToEngine): Promise<void> {
 // Navigation/settings arriving before the document finished loading are
 // sanctioned quiet no-ops (T15/T21): foliate throws on an unloaded book and the
 // app legitimately probes while chunks stream. 'copySelection' likewise needs a
-// loaded doc (it walks renderer.getContents()). Anything ELSE that throws is a
-// genuine failure (size/protocol mismatch, null assembler…) and must reach the
-// app as an engineError instead of being swallowed into an invisible hang.
-const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'copySelection', 'addHighlight', 'removeHighlight']);
+// loaded doc (it walks renderer.getContents()), and search/searchCancel touch
+// view.search/view.clearSearch which require an open book. Anything ELSE that
+// throws is a genuine failure (size/protocol mismatch, null assembler…) and
+// must reach the app as an engineError instead of being swallowed into an
+// invisible hang.
+const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'copySelection', 'addHighlight', 'removeHighlight', 'search', 'searchCancel']);
 
 onAppMessage((msg) => {
   void (async () => {
