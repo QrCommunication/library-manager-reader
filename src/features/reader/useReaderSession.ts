@@ -110,7 +110,13 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
       }
       const bridge = deps.makeBridge();
       setBridge(bridge);
+      // persistence gate: closed until the resume navigation has been issued.
+      // foliate emits a relocate (fraction≈0) right after load; without the gate
+      // that first event would save fraction≈0 over the stored row AND seed
+      // lastKnownRef with book-start, forcing the resume back to the beginning.
+      let resumed = false;
       offProgress = bridge.onProgress((p) => {
+        if (!resumed) return;
         const f = Math.min(1, Math.max(0, p.fraction));
         latest = { cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex };
         lastKnownRef.current = { bookId, cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex };
@@ -128,6 +134,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
           else bridge.goToFraction(lastKnown.fraction);
         } else if (prog?.cfi) bridge.goTo(prog.cfi);
         else if (prog) bridge.goToFraction(prog.fraction);
+        resumed = true;
         if (!cancelled) { setToc(loaded.toc); setTitle(book.title); setState('ready'); }
       } catch {
         if (!cancelled) { setErrorKind('open_failed'); setState('error'); }
