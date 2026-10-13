@@ -45,3 +45,6 @@ example
 # generated native folders
 /ios
 /android
+
+# engine build output
+.engine-out/
