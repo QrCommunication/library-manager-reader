@@ -6,6 +6,7 @@ declare module 'foliate-js/view.js' {
     open(book: Blob): Promise<void>;
     goTo(target: string): Promise<unknown>;
     goToFraction(fraction: number): Promise<void>;
+    getCFI(index: number, range: Range): string;
     book?: {
       toc?: unknown;
       metadata?: {

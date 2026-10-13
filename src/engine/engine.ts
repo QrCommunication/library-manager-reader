@@ -99,9 +99,45 @@ const applySettings = (s: ReaderSettings): void => {
   });
 };
 
-view.addEventListener('load', () => {
+let bookLanguage: string | null = null;
+let selectionTimer: ReturnType<typeof setTimeout> | null = null;
+
+const sendSelection = (doc: Document, index: number): void => {
+  const sel = doc.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed || sel.toString().trim() === '') {
+    send({ type: 'selectionChanged', text: null, rect: null, cfi: null, lang: null });
+    return;
+  }
+  const range = sel.getRangeAt(0);
+  let cfi: string | null = null;
+  try { cfi = view.getCFI(index, range); } catch { cfi = null; }
+  const r = range.getBoundingClientRect();
+  send({
+    type: 'selectionChanged',
+    text: sel.toString(),
+    rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+    cfi,
+    lang: bookLanguage,
+  });
+};
+
+const queueSelection = (doc: Document, index: number): void => {
+  if (selectionTimer) clearTimeout(selectionTimer);
+  // trailing debounce: the selection settles while the user drags the handles
+  selectionTimer = setTimeout(() => { selectionTimer = null; sendSelection(doc, index); }, 200);
+};
+
+view.addEventListener('load', (e: Event) => {
   documentLoaded = true;
   // installed foliate View emits 'load' with { doc, index }; toc/metadata live on view.book
+  const detail = (e as CustomEvent).detail as { doc?: Document; index?: number } | undefined;
+  bookLanguage = view.book?.metadata?.language ?? null;
+  if (detail?.doc) {
+    const doc = detail.doc;
+    const index = detail.index ?? 0;
+    // the paginator emits no selection events: watch the section doc ourselves
+    doc.addEventListener('selectionchange', () => queueSelection(doc, index));
+  }
   const book = view.book;
   send({
     type: 'bookLoaded',
@@ -271,16 +307,29 @@ async function handle(msg: AppToEngine): Promise<void> {
       send({ type: 'bookmarkCaptured', target: cfi ?? `fraction:${lastFraction}`, fraction: lastFraction, excerpt });
       break;
     }
+    case 'copySelection': {
+      // the system clipboard is fed by the webview doc holding the selection
+      // (no expo-clipboard: not in the allowed dependency list)
+      for (const { doc } of view.renderer.getContents()) {
+        const sel = doc?.getSelection?.();
+        if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+          try { doc?.execCommand('copy'); } catch { /* best effort */ }
+          break;
+        }
+      }
+      break;
+    }
     default: break;
   }
 }
 
 // Navigation/settings arriving before the document finished loading are
 // sanctioned quiet no-ops (T15/T21): foliate throws on an unloaded book and the
-// app legitimately probes while chunks stream. Anything ELSE that throws is a
+// app legitimately probes while chunks stream. 'copySelection' likewise needs a
+// loaded doc (it walks renderer.getContents()). Anything ELSE that throws is a
 // genuine failure (size/protocol mismatch, null assembler…) and must reach the
 // app as an engineError instead of being swallowed into an invisible hang.
-const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings']);
+const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'copySelection']);
 
 onAppMessage((msg) => {
   void (async () => {
