@@ -77,6 +77,13 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
     return bridge.onChromeToggle(() => setChromeVisible((v) => !v));
   }, [bridge]);
 
+  // top-center engine tap zone: immersive mode has no visible chrome, so the
+  // engine asks the app to surface the reading settings directly
+  useEffect(() => {
+    if (!bridge) return;
+    return bridge.onOpenSettings(() => { setChromeVisible(true); setPanel('typography'); });
+  }, [bridge]);
+
   // clearing on position change must not wait for an effect tick (stale
   // popovers must not survive a page turn) — render-time adjustment, the same
   // pattern as useReaderSession's session key

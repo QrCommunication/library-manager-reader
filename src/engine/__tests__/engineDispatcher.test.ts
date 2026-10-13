@@ -48,6 +48,10 @@ jest.mock('foliate-js/view.js', () => ({
     // real foliate: init() drives the first render that makes 'load' fire;
     // open() alone never displays anything
     async init(): Promise<void> { mockInitCalls++; }
+    // foliate View delegates page turns to its renderer; the tap-zone clicks
+    // call these on the view itself
+    async next(): Promise<void> {}
+    async prev(): Promise<void> {}
     goTo(): void { throw new Error('goTo on unloaded book'); }
     goToFraction(): void { throw new Error('goToFraction on unloaded book'); }
   },
@@ -410,5 +414,52 @@ describe('engine concentration mode (bionic word starts)', () => {
     await flush();
     expect(boldSegments(doc.body)).toHaveLength(0);
     expect(plainText(doc.body)).toBe('Bonjour le monde');
+  });
+});
+
+// ---- reader tap zones: clicks live in the engine section documents ----
+
+type ClickEvent = { clientX: number; clientY: number };
+
+const makeClickDoc = (): { doc: Document; click(e: ClickEvent): void } => {
+  const handlers: Record<string, (e: unknown) => void> = {};
+  const doc = {
+    body: stubElement('body'),
+    documentElement: { clientWidth: 1000, clientHeight: 1000 },
+    getSelection: () => ({ isCollapsed: true }),
+    addEventListener: (type: string, fn: (e: unknown) => void) => { handlers[type] = fn; },
+    querySelectorAll: () => [],
+  } as unknown as Document;
+  return {
+    doc,
+    click: (e) => handlers.click!({ target: { closest: () => null }, ...e }),
+  };
+};
+
+describe('reader tap zones', () => {
+  beforeEach(() => { posted = []; });
+
+  it('top-center tap asks the app to open the reading settings', () => {
+    const { doc, click } = makeClickDoc();
+    fireLoad(doc);
+    click({ clientX: 500, clientY: 80 });
+    expect(posted.some((m) => m.type === 'openSettings')).toBe(true);
+    expect(posted.some((m) => m.type === 'chromeToggle')).toBe(false);
+  });
+
+  it('middle-center tap still toggles the chrome', () => {
+    const { doc, click } = makeClickDoc();
+    fireLoad(doc);
+    click({ clientX: 500, clientY: 500 });
+    expect(posted.some((m) => m.type === 'chromeToggle')).toBe(true);
+    expect(posted.some((m) => m.type === 'openSettings')).toBe(false);
+  });
+
+  it('top strip is confined to the middle third (sides still turn pages)', () => {
+    const { doc, click } = makeClickDoc();
+    fireLoad(doc);
+    click({ clientX: 100, clientY: 80 });
+    expect(posted.some((m) => m.type === 'openSettings')).toBe(false);
+    expect(posted.some((m) => m.type === 'chromeToggle')).toBe(false);
   });
 });
