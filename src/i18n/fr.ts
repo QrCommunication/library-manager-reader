@@ -27,6 +27,7 @@ export const fr = {
     loading: 'Chargement…',
     error: {
       missing: 'Impossible d’ouvrir ce livre : fichier introuvable',
+      open: 'Impossible d’ouvrir ce livre',
     },
   },
   settings: {

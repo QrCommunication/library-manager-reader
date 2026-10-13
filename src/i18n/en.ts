@@ -27,6 +27,7 @@ export const en = {
     loading: 'Loading…',
     error: {
       missing: 'This book can’t be opened: file not found',
+      open: 'Could not open this book',
     },
   },
   settings: {
