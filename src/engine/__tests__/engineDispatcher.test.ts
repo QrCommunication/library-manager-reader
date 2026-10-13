@@ -22,6 +22,18 @@ jest.mock('foliate-js/view.js', () => ({
   },
 }));
 
+// foliate-js ships pure ESM ("type": "module") and sits in jest's
+// transformIgnorePatterns, so the real overlayer.js cannot be parsed here;
+// the dispatcher tests never draw, a shape-compatible stub is enough
+jest.mock('foliate-js/overlayer.js', () => ({
+  Overlayer: class {
+    static highlight(): unknown { return {}; }
+    static underline(): unknown { return {}; }
+    // eslint-disable-next-line @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars
+    constructor(doc: unknown) {}
+  },
+}));
+
 // keep the emscripten unrar glue out of the node test process
 jest.mock('node-unrar-js', () => ({ createExtractorFromData: jest.fn() }));
 

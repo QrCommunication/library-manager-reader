@@ -1,10 +1,11 @@
 import { PROTOCOL_VERSION, type AppToEngine, type EngineToApp } from '../core/bridge/protocol';
 import { View } from 'foliate-js/view.js';
+import { Overlayer } from 'foliate-js/overlayer.js';
 import { createChunkAssembler } from './chunkAssembler';
 import { convertCbrToCbz } from './extractMode';
 import { createExtractorFromData } from 'node-unrar-js';
 import { zipSync, strToU8 } from 'fflate';
-import type { OriginalFormat, ReaderSettings, TocItem } from '../core/types';
+import type { HighlightColor, OriginalFormat, ReaderSettings, TocItem } from '../core/types';
 
 declare const __LITERATA_B64__: string;
 declare const __UNRAR_WASM_B64__: string;
@@ -129,6 +130,11 @@ const queueSelection = (doc: Document, index: number): void => {
 
 view.addEventListener('load', (e: Event) => {
   documentLoaded = true;
+  // 'load' fires per section display (and per book open): a selection debounce
+  // pending from the previous section doc must not emit after navigation, and a
+  // queued highlight replay belongs to the previous layout as well
+  if (selectionTimer) { clearTimeout(selectionTimer); selectionTimer = null; }
+  if (highlightReplayTimer) { clearTimeout(highlightReplayTimer); highlightReplayTimer = null; }
   // installed foliate View emits 'load' with { doc, index }; toc/metadata live on view.book
   const detail = (e as CustomEvent).detail as { doc?: Document; index?: number } | undefined;
   bookLanguage = view.book?.metadata?.language ?? null;
@@ -155,6 +161,41 @@ view.addEventListener('relocate', (e: Event) => {
   lastFraction = d?.fraction ?? lastFraction;
   // installed foliate relocate detail has section: { current, total }
   send({ type: 'progress', cfi: d?.cfi ?? null, fraction: d?.fraction ?? 0, sectionIndex: d?.section?.current ?? null });
+});
+
+// Highlights are drawn inside the engine via foliate's Overlayer. The record map
+// is keyed by annotation id so 'draw-annotation' can resolve the color, and so a
+// repeated addHighlight with the same id recolors in place (addAnnotation removes
+// then re-draws the overlay for the same CFI).
+const HIGHLIGHT_COLORS: Record<HighlightColor, string> = {
+  yellow: '#F7D354', green: '#7DCEA0', blue: '#85C1E9', red: '#EC7063',
+};
+
+type HighlightRecord = { annotation: { id: string; value: string }; color: HighlightColor };
+const highlightRecords = new Map<string, HighlightRecord>();
+let highlightReplayTimer: ReturnType<typeof setTimeout> | null = null;
+
+view.addEventListener('draw-annotation', (e: Event) => {
+  const { draw, annotation } = (e as CustomEvent).detail as {
+    draw: (func: typeof Overlayer.highlight, opts: { color: string }) => void;
+    annotation: { id?: string };
+  };
+  const rec = annotation.id ? highlightRecords.get(annotation.id) : undefined;
+  draw(Overlayer.highlight, { color: HIGHLIGHT_COLORS[rec?.color ?? 'yellow'] });
+});
+
+// foliate overlays do not survive a section change (the overlayer lives on the
+// section doc): the demo re-calls addAnnotation for every annotation after each
+// relocate, so replay all records (debounced to one pass per relocate burst)
+view.addEventListener('relocate', () => {
+  if (highlightReplayTimer || highlightRecords.size === 0) return;
+  highlightReplayTimer = setTimeout(() => {
+    highlightReplayTimer = null;
+    for (const rec of highlightRecords.values()) {
+      // rejects when the CFI's section is not in the viewport: expected, skip
+      view.addAnnotation(rec.annotation).catch(() => { /* section absent du viewport */ });
+    }
+  }, 0);
 });
 
 let settings: ReaderSettings = {
@@ -319,6 +360,22 @@ async function handle(msg: AppToEngine): Promise<void> {
       }
       break;
     }
+    case 'addHighlight': {
+      // same id arriving again = recolor: keep the annotation object (foliate
+      // keys overlays by CFI value) and let addAnnotation redraw it
+      const existing = highlightRecords.get(msg.id);
+      const annotation = existing?.annotation ?? { id: msg.id, value: msg.cfi };
+      highlightRecords.set(msg.id, { annotation, color: msg.color });
+      view.addAnnotation(annotation).catch((e) => console.log('[engine] addHighlight failed', e));
+      break;
+    }
+    case 'removeHighlight': {
+      const rec = highlightRecords.get(msg.id);
+      if (!rec) break;
+      highlightRecords.delete(msg.id);
+      view.deleteAnnotation(rec.annotation).catch(() => { /* pas affiché */ });
+      break;
+    }
     default: break;
   }
 }
@@ -329,7 +386,7 @@ async function handle(msg: AppToEngine): Promise<void> {
 // loaded doc (it walks renderer.getContents()). Anything ELSE that throws is a
 // genuine failure (size/protocol mismatch, null assembler…) and must reach the
 // app as an engineError instead of being swallowed into an invisible hang.
-const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'copySelection']);
+const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'copySelection', 'addHighlight', 'removeHighlight']);
 
 onAppMessage((msg) => {
   void (async () => {
