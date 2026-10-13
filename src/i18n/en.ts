@@ -48,6 +48,8 @@ export const en = {
     title: 'Settings',
     language: {
       auto: 'Automatic',
+      fr: 'Français',
+      en: 'English',
     },
     theme: {
       day: 'Day',

@@ -55,7 +55,17 @@ export function LibraryScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: themeTokens('day').background }]}>
-      <Text style={styles.title}>{t('library.title')}</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>{t('library.title')}</Text>
+        <Pressable
+          onPress={() => router.push('/settings')}
+          accessibilityLabel={t('settings.title')}
+          accessibilityRole="button"
+          hitSlop={8}
+        >
+          <Text style={styles.settingsGlyph}>{'⚙'}</Text>
+        </Pressable>
+      </View>
       <TextInput
         style={styles.search}
         placeholder={t('library.search')}
@@ -117,7 +127,9 @@ export function LibraryScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, paddingTop: 48, paddingHorizontal: 12 },
-  title: { fontSize: 28, fontWeight: '700', marginBottom: 8 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  title: { fontSize: 28, fontWeight: '700' },
+  settingsGlyph: { fontSize: 22, lineHeight: 28 },
   search: { borderWidth: 1, borderColor: '#CCC', borderRadius: 8, paddingHorizontal: 10, height: 40, marginBottom: 8 },
   sortRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   sortChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: '#CCC' },

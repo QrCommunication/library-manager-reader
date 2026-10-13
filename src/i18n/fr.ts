@@ -48,6 +48,8 @@ export const fr = {
     title: 'Réglages',
     language: {
       auto: 'Automatique',
+      fr: 'Français',
+      en: 'English',
     },
     theme: {
       day: 'Jour',
