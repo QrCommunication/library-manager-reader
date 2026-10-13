@@ -52,6 +52,40 @@ describe('lookupService.define', () => {
   });
 });
 
+describe('lookupService gloss sanitization (entity-borne tag injection)', () => {
+  const firstGloss = async (definition: string): Promise<string> => {
+    const service = createLookupService({
+      fetch: fetchOk(200, {
+        English: [{ partOfSpeech: 'Noun', definitions: [{ definition }] }],
+      }) as unknown as typeof fetch,
+    });
+    const senses = await service.define('w', 'en');
+    return senses[0]?.glosses[0] ?? '';
+  };
+
+  it('neutralizes entity-encoded script tags so no "<" survives', async () => {
+    const out = await firstGloss('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(out).toBe('alert(1)');
+    expect(out).not.toContain('<');
+  });
+
+  it('decodes double-encoded tags before stripping them', async () => {
+    const out = await firstGloss('&amp;lt;i&amp;gt;bold&amp;lt;/i&amp;gt;');
+    expect(out).toBe('bold');
+    expect(out).not.toContain('<i>');
+  });
+
+  it('strips real tags and entity-encoded tags mixed in one gloss', async () => {
+    const out = await firstGloss('<b>Hello</b> &amp; &lt;b&gt;world&lt;/b&gt;');
+    expect(out).toBe('Hello & world');
+  });
+
+  it('keeps legit math prose like "3 < 5 > 2"', async () => {
+    const out = await firstGloss('3 < 5 &gt; 2');
+    expect(out).toBe('3 < 5 > 2');
+  });
+});
+
 describe('lookupService.translate', () => {
   const cfg = async () => ({ url: 'https://lt.example', apiKey: null as string | null });
 

@@ -23,13 +23,38 @@ export interface LookupService {
 
 const GLOSS_MAX = 300;
 
-const stripHtml = (html: string): string => html
-  .replace(/<[^>]*>/g, '')
-  .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
-  .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-  .replace(/&quot;/g, '"').replace(/&#39;/g, '\'')
-  .replace(/\s+/g, ' ')
-  .trim();
+// Supported entity set: decode exactly one layer per pass (String.replace never
+// re-scans its own output, so "&amp;lt;" becomes "&lt;", not "<").
+const ENTITIES: Record<string, string> = {
+  '&nbsp;': ' ',
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': '\'',
+  '&apos;': '\'',
+};
+
+const decodeEntities = (s: string): string => s.replace(/&(?:nbsp|amp|lt|gt|quot|apos|#39);/g, (m) => ENTITIES[m] ?? m);
+
+// Only well-formed tag-like sequences: "<" followed by a letter, "!", "/" or "?"
+// (prose such as "a < b" or "3 < 5 > 2" is left untouched).
+const stripTags = (s: string): string => s.replace(/<[A-Za-z!/?][^>]*>/g, '');
+
+const sanitizeHtml = (html: string): string => {
+  // Decode first, then strip; repeat until stable (bounded) so that
+  // multi-encoded payloads like "&amp;lt;i&amp;gt;..." cannot re-form tags.
+  let out = html;
+  for (let i = 0; i < 3; i += 1) {
+    const next = stripTags(decodeEntities(out));
+    if (next === out) break;
+    out = next;
+  }
+  // Backstop: drop any surviving "<" that could start a tag (e.g. a lone
+  // "&lt;script" with no closing ">"), while keeping comparison prose intact.
+  out = out.replace(/<(?=[A-Za-z!/?])/g, '');
+  return out.replace(/\s+/g, ' ').trim();
+};
 
 const clampGloss = (s: string): string => (s.length > GLOSS_MAX ? `${s.slice(0, GLOSS_MAX - 1)}…` : s);
 
@@ -42,7 +67,7 @@ function parseDefinitions(json: Record<string, unknown>): DefinitionSense[] {
   const senses: DefinitionSense[] = [];
   for (const g of groups) {
     const glosses = (g.definitions ?? [])
-      .map((d) => clampGloss(stripHtml(d.definition ?? '')))
+      .map((d) => clampGloss(sanitizeHtml(d.definition ?? '')))
       .filter((s) => s.length > 0);
     if (glosses.length > 0) senses.push({ pos: g.partOfSpeech ?? null, glosses });
   }
