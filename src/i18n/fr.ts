@@ -44,6 +44,16 @@ export const fr = {
     lineHeight: 'Interligne',
     margins: 'Marges',
   },
+  lookup: {
+    define: 'Définir',
+    translate: 'Traduire',
+    copy: 'Copier',
+    loading: 'Recherche de la définition…',
+    translating: 'Traduction…',
+    offline: 'Recherche en ligne indisponible (hors connexion)',
+    notFound: 'Aucune définition trouvée',
+    serviceError: 'Le service de définition a échoué',
+  },
   settings: {
     title: 'Réglages',
     language: {

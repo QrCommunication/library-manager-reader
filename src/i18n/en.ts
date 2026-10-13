@@ -44,6 +44,16 @@ export const en = {
     lineHeight: 'Line height',
     margins: 'Margins',
   },
+  lookup: {
+    define: 'Define',
+    translate: 'Translate',
+    copy: 'Copy',
+    loading: 'Looking up…',
+    translating: 'Translating…',
+    offline: 'Online lookup unavailable (offline)',
+    notFound: 'No definition found',
+    serviceError: 'The definition service failed',
+  },
   settings: {
     title: 'Settings',
     language: {
