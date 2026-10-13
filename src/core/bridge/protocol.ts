@@ -1,4 +1,7 @@
-import type { BookFormat, BookMetadata, OriginalFormat, ReaderSettings, TocItem } from '../types';
+import type {
+  BookFormat, BookMetadata, HighlightColor, OriginalFormat,
+  ReaderSettings, SelectionRect, TocItem,
+} from '../types';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -12,7 +15,15 @@ export type AppToEngine =
   | { type: 'prev' }
   | { type: 'applySettings'; settings: ReaderSettings }
   | { type: 'captureBookmark' }
-  | { type: 'extract'; requestId: string; format: OriginalFormat; size: number };
+  | { type: 'extract'; requestId: string; format: OriginalFormat; size: number }
+  | { type: 'addHighlight'; id: string; cfi: string; color: HighlightColor }
+  | { type: 'removeHighlight'; id: string }
+  | { type: 'copySelection' }
+  | { type: 'search'; query: string }
+  | { type: 'searchCancel' }
+  | { type: 'ttsStart'; cfi: string | null }
+  | { type: 'ttsStop' }
+  | { type: 'ttsNext' };
 
 export type EngineCover = { coverJpegBase64: string | null };
 
@@ -26,8 +37,22 @@ export type EngineToApp =
   | { type: 'bookmarkCaptured'; target: string; fraction: number; excerpt: string }
   | { type: 'extractResult'; requestId: string; ok: true; metadata: EngineMetadataPayload; cbzBase64: string | null }
   | { type: 'extractResult'; requestId: string; ok: false; error: string }
-  | { type: 'engineError'; code: 'open_failed' | 'parse_failed' | 'unknown'; message: string };
+  | { type: 'engineError'; code: 'open_failed' | 'parse_failed' | 'unknown'; message: string }
+  | { type: 'selectionChanged'; text: string | null; rect: SelectionRect | null; cfi: string | null; lang: string | null }
+  | { type: 'searchResult'; cfi: string; excerpt: string; fraction: number }
+  | { type: 'searchDone'; count: number }
+  | { type: 'ttsSentence'; text: string; cfi: string | null }
+  // v1.x additive: page taps moved INTO the engine document (RN tap zones
+  // blocked native text selection); a middle-zone tap asks the app to toggle
+  // the reader chrome
+  | { type: 'chromeToggle' };
 
 export const ENGINE_TO_APP_TYPES: readonly EngineToApp['type'][] = [
   'engineReady', 'dataAck', 'bookLoaded', 'progress', 'bookmarkCaptured', 'extractResult', 'engineError',
+  'selectionChanged', 'searchResult', 'searchDone', 'ttsSentence', 'chromeToggle',
+];
+
+export const APP_TO_ENGINE_TYPES: readonly AppToEngine['type'][] = [
+  'openBook', 'data', 'dataEnd', 'goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'captureBookmark', 'extract',
+  'addHighlight', 'removeHighlight', 'copySelection', 'search', 'searchCancel', 'ttsStart', 'ttsStop', 'ttsNext',
 ];

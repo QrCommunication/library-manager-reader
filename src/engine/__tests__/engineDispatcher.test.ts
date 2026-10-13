@@ -22,6 +22,35 @@ jest.mock('foliate-js/view.js', () => ({
   },
 }));
 
+// foliate-js ships pure ESM ("type": "module") and sits in jest's
+// transformIgnorePatterns, so the real overlayer.js cannot be parsed here;
+// the dispatcher tests never draw, a shape-compatible stub is enough
+jest.mock('foliate-js/overlayer.js', () => ({
+  Overlayer: class {
+    static highlight(): unknown { return {}; }
+    static underline(): unknown { return {}; }
+    // eslint-disable-next-line @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars
+    constructor(doc: unknown) {}
+  },
+}));
+
+// same story for the TTS imports the engine now pulls in: never driven in
+// these tests (sentence streaming is DOM wiring), stubs only satisfy the imports
+jest.mock('foliate-js/tts.js', () => ({
+  TTS: class {
+    doc: unknown;
+    constructor(doc: unknown) { this.doc = doc; }
+    start(): string | undefined { return undefined; }
+    resume(): string | undefined { return undefined; }
+    next(): string | undefined { return undefined; }
+    prev(): string | undefined { return undefined; }
+  },
+}));
+
+jest.mock('foliate-js/text-walker.js', () => ({
+  textWalker: function* (_x: unknown, _func: unknown): Generator<unknown> { /* unused */ },
+}));
+
 // keep the emscripten unrar glue out of the node test process
 jest.mock('node-unrar-js', () => ({ createExtractorFromData: jest.fn() }));
 
@@ -78,6 +107,12 @@ describe('engine dispatcher error surfacing', () => {
     feed({ type: 'next' });
     feed({ type: 'prev' });
     feed({ type: 'applySettings', settings: { fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day' } });
+    // TTS commands are gated the same way (ttsStart/ttsNext per the Task 14
+    // brief); ttsStop is NOT gated but nulling the null state must stay a
+    // silent no-op pre-load
+    feed({ type: 'ttsStart', cfi: null });
+    feed({ type: 'ttsNext' });
+    feed({ type: 'ttsStop' });
     await flush();
     expect(engineErrors()).toHaveLength(0);
     expect(posted.filter((m) => m.type !== 'engineReady')).toHaveLength(0);

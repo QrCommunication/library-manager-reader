@@ -46,6 +46,13 @@ export function TypographyPanel({ settings, onSettingsChange }: {
         min={0} max={64} step={4} decimals={0}
         onChange={(v) => patch({ margin: v })}
       />
+      <Stepper
+        label={t('reader.brightness')}
+        value={settings.brightness}
+        min={0} max={70} step={5} decimals={0}
+        accessibilityLabel="brightness"
+        onChange={(v) => patch({ brightness: v })}
+      />
 
       <View style={styles.segmentRow}>
         {THEME_OPTIONS.map((option) => (
@@ -74,15 +81,19 @@ const THEME_OPTIONS: { value: ThemeName; labelKey: string }[] = [
   { value: 'day', labelKey: 'settings.theme.day' },
   { value: 'sepia', labelKey: 'settings.theme.sepia' },
   { value: 'night', labelKey: 'settings.theme.night' },
+  { value: 'auto', labelKey: 'settings.theme.auto' },
 ];
 
-function Stepper({ label, value, min, max, step, decimals, onChange }: {
+function Stepper({ label, value, min, max, step, decimals, accessibilityLabel, onChange }: {
   label: string;
   value: number;
   min: number;
   max: number;
   step: number;
   decimals: number;
+  // stable ids for the +/- buttons (screen readers, tests); derived from the
+  // visible label when omitted
+  accessibilityLabel?: string;
   onChange(v: number): void;
 }) {
   // round to `decimals` to avoid float drift on repeated +/- taps
@@ -96,6 +107,7 @@ function Stepper({ label, value, min, max, step, decimals, onChange }: {
         style={[styles.stepButton, atMin && styles.buttonDisabled]}
         disabled={atMin}
         hitSlop={8}
+        accessibilityLabel={accessibilityLabel ? `${accessibilityLabel}-` : undefined}
         onPress={() => onChange(clamp(value - step))}
       >
         <Text style={styles.stepSymbol}>{'−'}</Text>
@@ -105,6 +117,7 @@ function Stepper({ label, value, min, max, step, decimals, onChange }: {
         style={[styles.stepButton, atMax && styles.buttonDisabled]}
         disabled={atMax}
         hitSlop={8}
+        accessibilityLabel={accessibilityLabel ? `${accessibilityLabel}+` : undefined}
         onPress={() => onChange(clamp(value + step))}
       >
         <Text style={styles.stepSymbol}>{'+'}</Text>

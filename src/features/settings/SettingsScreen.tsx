@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import Constants from 'expo-constants';
 import { useServices } from '../../core/services';
@@ -20,6 +20,9 @@ const THEMES: { value: ThemeName; labelKey: string }[] = [
   { value: 'day', labelKey: 'settings.theme.day' },
   { value: 'sepia', labelKey: 'settings.theme.sepia' },
   { value: 'night', labelKey: 'settings.theme.night' },
+  // 'auto' is stored as-is in both stores; resolution to day/night happens at
+  // render time (reader chrome, engine cssFor fallback), never in the stores
+  { value: 'auto', labelKey: 'settings.theme.auto' },
 ];
 
 export function SettingsScreen() {
@@ -89,6 +92,31 @@ export function SettingsScreen() {
       </View>
 
       <View style={styles.infoRow}>
+        <Text style={styles.rowLabel}>{t('settings.libreTranslateUrl')}</Text>
+        <TextInput
+          style={styles.textInput}
+          value={prefs.libreTranslateUrl}
+          onChangeText={(v) => { void update({ libreTranslateUrl: v }); }}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          numberOfLines={1}
+        />
+      </View>
+      <View style={styles.infoRow}>
+        <Text style={styles.rowLabel}>{t('settings.libreTranslateApiKey')}</Text>
+        <TextInput
+          style={styles.textInput}
+          value={prefs.libreTranslateApiKey}
+          onChangeText={(v) => { void update({ libreTranslateApiKey: v }); }}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+          numberOfLines={1}
+        />
+      </View>
+
+      <View style={styles.infoRow}>
         <Text style={styles.rowLabel}>{t('settings.storage')}</Text>
         <Text style={styles.infoValue}>{storageBytes === null ? null : formatBytes(storageBytes, lang)}</Text>
       </View>
@@ -120,4 +148,6 @@ const styles = StyleSheet.create({
   themeChipTextOn: { color: '#FFF', fontWeight: '600' },
   infoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#CCC' },
   infoValue: { fontSize: 15, fontVariant: ['tabular-nums'] },
+  // modeled on LibraryScreen's styles.search; flex:1 fills the row next to the label
+  textInput: { flex: 1, marginLeft: 12, borderWidth: 1, borderColor: '#CCC', borderRadius: 8, paddingHorizontal: 10, height: 40 },
 });

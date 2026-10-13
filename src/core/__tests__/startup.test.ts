@@ -10,6 +10,7 @@ jest.mock('../services', () => ({
   createServices: () => ({
     paths: { ensureAll: async () => {} },
     books: { purgeDeletedBefore: async () => 0 },
+    annotations: { purgeDeletedBefore: async () => {} },
   }),
 }));
 

@@ -1,10 +1,15 @@
 import { PROTOCOL_VERSION, type AppToEngine, type EngineToApp } from '../core/bridge/protocol';
 import { View } from 'foliate-js/view.js';
+import { Overlayer } from 'foliate-js/overlayer.js';
+import { TTS } from 'foliate-js/tts.js';
+import { textWalker } from 'foliate-js/text-walker.js';
 import { createChunkAssembler } from './chunkAssembler';
 import { convertCbrToCbz } from './extractMode';
+import { fractionForSection } from './searchFraction';
+import { ssmlToText } from './ssml';
 import { createExtractorFromData } from 'node-unrar-js';
 import { zipSync, strToU8 } from 'fflate';
-import type { OriginalFormat, ReaderSettings, TocItem } from '../core/types';
+import type { HighlightColor, OriginalFormat, ReaderSettings, TocItem } from '../core/types';
 
 declare const __LITERATA_B64__: string;
 declare const __UNRAR_WASM_B64__: string;
@@ -82,7 +87,9 @@ const cssFor = (s: ReaderSettings): string => {
     sepia: { bg: '#F4ECD8', fg: '#3B2F1E', link: '#8B5E34' },
     night: { bg: '#101314', fg: '#D7DBDC', link: '#7FB4C9' },
   } as const;
-  const t = themes[s.theme];
+  // defensive: the app resolves 'auto' before applySettings, but if an 'auto'
+  // theme ever reached the engine it must not break — fall back to day
+  const t = themes[s.theme === 'auto' ? 'day' : s.theme];
   const family = s.fontFamily === 'sans' ? 'system-ui, sans-serif'
     : s.fontFamily === 'literata' ? 'Literata, serif' : 'Georgia, serif';
   return `@namespace epub "http://www.idpf.org/2007/ops";
@@ -95,13 +102,129 @@ const applySettings = (s: ReaderSettings): void => {
   view.renderer.setStyles?.(cssFor(s));
   Object.assign(container.style, {
     padding: `${s.margin}px`,
-    background: { day: '#FFFFFF', sepia: '#F4ECD8', night: '#101314' }[s.theme],
+    background: { day: '#FFFFFF', sepia: '#F4ECD8', night: '#101314' }[s.theme === 'auto' ? 'day' : s.theme],
   });
 };
 
-view.addEventListener('load', () => {
+let bookLanguage: string | null = null;
+let selectionTimer: ReturnType<typeof setTimeout> | null = null;
+
+const sendSelection = (doc: Document, index: number): void => {
+  const sel = doc.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed || sel.toString().trim() === '') {
+    send({ type: 'selectionChanged', text: null, rect: null, cfi: null, lang: null });
+    return;
+  }
+  const range = sel.getRangeAt(0);
+  let cfi: string | null = null;
+  try { cfi = view.getCFI(index, range); } catch { cfi = null; }
+  const r = range.getBoundingClientRect();
+  send({
+    type: 'selectionChanged',
+    text: sel.toString(),
+    rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+    cfi,
+    lang: bookLanguage,
+  });
+};
+
+const queueSelection = (doc: Document, index: number): void => {
+  if (selectionTimer) clearTimeout(selectionTimer);
+  // trailing debounce: the selection settles while the user drags the handles
+  selectionTimer = setTimeout(() => { selectionTimer = null; sendSelection(doc, index); }, 200);
+};
+
+// TTS pipeline: the engine owns sentence segmentation via foliate's TTS class;
+// the RN side (Task 13/15) only speaks the text that arrives. V1.x ruling: TTS
+// covers the CURRENT SECTION only — foliate returns undefined at section end,
+// which the engine turns into a single '' end-of-stream marker; no auto-advance
+// to the next section.
+let tts: InstanceType<typeof TTS> | null = null;
+let ttsRange: Range | null = null;
+let ttsEmitting = false;
+
+// CFI of the sentence currently highlighted by foliate's TTS (fed by the
+// highlight callback below); null whenever the range is not in the view
+const ttsCurrentCfi = (): string | null => {
+  if (!ttsRange) return null;
+  const contents = view.renderer.getContents();
+  const first = contents[0];
+  if (!first) return null;
+  try { return view.getCFI(first.index, ttsRange); } catch { return null; }
+};
+
+const ttsEmit = (step: 'start' | 'next'): void => {
+  if (!tts || ttsEmitting) return;
+  ttsEmitting = true;
+  try {
+    // next(true): foliate calls our highlight callback with the sentence range
+    // → ttsRange → CFI of the sentence now being spoken
+    const ssml = step === 'start' ? tts.start() : tts.next(true);
+    if (ssml == null) {
+      // section exhausted: tear down and end the stream (RN stops calling next)
+      tts = null;
+      ttsRange = null;
+      send({ type: 'ttsSentence', text: '', cfi: null }); // fin de flux
+    } else {
+      send({ type: 'ttsSentence', text: ssmlToText(ssml), cfi: ttsCurrentCfi() });
+    }
+  } finally {
+    ttsEmitting = false;
+  }
+};
+
+const ttsStartAt = async (cfi: string | null): Promise<void> => {
+  if (cfi) { try { await view.goTo(cfi); } catch { /* position par défaut */ } }
+  const contents = view.renderer.getContents();
+  const first = contents[0];
+  if (!first?.doc) { send({ type: 'ttsSentence', text: '', cfi: null }); return; }
+  ttsRange = null;
+  tts = new TTS(first.doc, textWalker, (range: Range) => { ttsRange = range.cloneRange(); }, 'sentence');
+  ttsEmit('start');
+};
+
+view.addEventListener('load', (e: Event) => {
   documentLoaded = true;
+  // 'load' fires per section display (and per book open): a selection debounce
+  // pending from the previous section doc must not emit after navigation, and a
+  // queued highlight replay belongs to the previous layout as well
+  if (selectionTimer) { clearTimeout(selectionTimer); selectionTimer = null; }
+  if (highlightReplayTimer) { clearTimeout(highlightReplayTimer); highlightReplayTimer = null; }
+  // TTS state is bound to the section doc that produced it: a pending instance
+  // or highlight range must not leak into the freshly loaded section doc
+  tts = null;
+  ttsRange = null;
   // installed foliate View emits 'load' with { doc, index }; toc/metadata live on view.book
+  const detail = (e as CustomEvent).detail as { doc?: Document; index?: number } | undefined;
+  bookLanguage = view.book?.metadata?.language ?? null;
+  if (detail?.doc) {
+    const doc = detail.doc;
+    const index = detail.index ?? 0;
+    // the paginator emits no selection events: watch the section doc ourselves
+    let collapsedAt = 0;
+    doc.addEventListener('selectionchange', () => {
+      const sel = doc.getSelection();
+      if (sel && sel.isCollapsed) collapsedAt = Date.now();
+      queueSelection(doc, index);
+    });
+    // Page taps live in the engine document: the former RN tap zones sat above
+    // the WebView and swallowed every touch, so the long-press that starts
+    // native text selection never reached the doc. Guards keep a mid-selection
+    // gesture and book links from turning pages; collapsedAt (scoped to this
+    // section doc, so it resets on every 'load') makes the tap that DISMISSES
+    // a selection not flip the page in the same gesture.
+    doc.addEventListener('click', (e: MouseEvent) => {
+      const sel = doc.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      if (collapsedAt && Date.now() - collapsedAt < 400) return;
+      const target = e.target as Element | null;
+      if (target && typeof target.closest === 'function' && target.closest('a')) return;
+      const x = e.clientX / (doc.documentElement.clientWidth || 1);
+      if (x < 0.33) void view.prev();
+      else if (x > 0.67) void view.next();
+      else send({ type: 'chromeToggle' });
+    });
+  }
   const book = view.book;
   send({
     type: 'bookLoaded',
@@ -114,15 +237,70 @@ view.addEventListener('load', () => {
   });
 });
 
+// Full-book search over foliate's async search generator, which streams
+// {progress} / {label, subitems} / {cfi, excerpt} then 'done'. Results are
+// capped and token-guarded: every new search (and searchCancel) bumps
+// searchToken, so a superseded iteration stops emitting and drops its
+// searchDone — the app receives exactly one searchDone per accepted search.
+const SEARCH_RESULT_CAP = 200;
+let searchToken = 0;
+// approximate per-section fraction for the result list, fed by relocate below
+let sectionCount = 0;
+
+// foliate exposes no per-CFI fraction: resolve the hit's section index and
+// report its midpoint position (pure math in searchFraction.ts), 0 on failure
+const fractionForCfi = async (cfi: string): Promise<number> => {
+  try {
+    const { index } = await view.resolveNavigation(cfi);
+    return fractionForSection(index, sectionCount);
+  } catch { return 0; }
+};
+
 view.addEventListener('relocate', (e: Event) => {
   const d = (e as CustomEvent).detail;
   lastFraction = d?.fraction ?? lastFraction;
   // installed foliate relocate detail has section: { current, total }
+  sectionCount = d?.section?.total ?? sectionCount;
   send({ type: 'progress', cfi: d?.cfi ?? null, fraction: d?.fraction ?? 0, sectionIndex: d?.section?.current ?? null });
 });
 
+// Highlights are drawn inside the engine via foliate's Overlayer. The record map
+// is keyed by annotation id so 'draw-annotation' can resolve the color, and so a
+// repeated addHighlight with the same id recolors in place (addAnnotation removes
+// then re-draws the overlay for the same CFI).
+const HIGHLIGHT_COLORS: Record<HighlightColor, string> = {
+  yellow: '#F7D354', green: '#7DCEA0', blue: '#85C1E9', red: '#EC7063',
+};
+
+type HighlightRecord = { annotation: { id: string; value: string }; color: HighlightColor };
+const highlightRecords = new Map<string, HighlightRecord>();
+let highlightReplayTimer: ReturnType<typeof setTimeout> | null = null;
+
+view.addEventListener('draw-annotation', (e: Event) => {
+  const { draw, annotation } = (e as CustomEvent).detail as {
+    draw: (func: typeof Overlayer.highlight, opts: { color: string }) => void;
+    annotation: { id?: string };
+  };
+  const rec = annotation.id ? highlightRecords.get(annotation.id) : undefined;
+  draw(Overlayer.highlight, { color: HIGHLIGHT_COLORS[rec?.color ?? 'yellow'] });
+});
+
+// foliate overlays do not survive a section change (the overlayer lives on the
+// section doc): the demo re-calls addAnnotation for every annotation after each
+// relocate, so replay all records (debounced to one pass per relocate burst)
+view.addEventListener('relocate', () => {
+  if (highlightReplayTimer || highlightRecords.size === 0) return;
+  highlightReplayTimer = setTimeout(() => {
+    highlightReplayTimer = null;
+    for (const rec of highlightRecords.values()) {
+      // rejects when the CFI's section is not in the viewport: expected, skip
+      view.addAnnotation(rec.annotation).catch(() => { /* section absent du viewport */ });
+    }
+  }, 0);
+});
+
 let settings: ReaderSettings = {
-  fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day',
+  fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0,
 };
 
 let assembler: ReturnType<typeof createChunkAssembler> | null = null;
@@ -271,16 +449,87 @@ async function handle(msg: AppToEngine): Promise<void> {
       send({ type: 'bookmarkCaptured', target: cfi ?? `fraction:${lastFraction}`, fraction: lastFraction, excerpt });
       break;
     }
+    case 'copySelection': {
+      // the system clipboard is fed by the webview doc holding the selection
+      // (no expo-clipboard: not in the allowed dependency list)
+      for (const { doc } of view.renderer.getContents()) {
+        const sel = doc?.getSelection?.();
+        if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+          try { doc?.execCommand('copy'); } catch { /* best effort */ }
+          break;
+        }
+      }
+      break;
+    }
+    case 'addHighlight': {
+      // same id arriving again = recolor: keep the annotation object (foliate
+      // keys overlays by CFI value) and let addAnnotation redraw it
+      const existing = highlightRecords.get(msg.id);
+      const annotation = existing?.annotation ?? { id: msg.id, value: msg.cfi };
+      highlightRecords.set(msg.id, { annotation, color: msg.color });
+      view.addAnnotation(annotation).catch((e) => console.log('[engine] addHighlight failed', e));
+      break;
+    }
+    case 'removeHighlight': {
+      const rec = highlightRecords.get(msg.id);
+      if (!rec) break;
+      highlightRecords.delete(msg.id);
+      view.deleteAnnotation(rec.annotation).catch(() => { /* pas affiché */ });
+      break;
+    }
+    case 'search': {
+      const token = ++searchToken;
+      void (async () => {
+        let count = 0;
+        try {
+          for await (const result of view.search({ query: msg.query })) {
+            if (token !== searchToken) return;
+            if (result === 'done') break;
+            if ('subitems' in result && result.subitems) {
+              for (const item of result.subitems) {
+                if (count >= SEARCH_RESULT_CAP) break;
+                send({ type: 'searchResult', cfi: item.cfi, excerpt: item.excerpt, fraction: await fractionForCfi(item.cfi) });
+                count++;
+              }
+            } else if ('cfi' in result && result.cfi) {
+              if (count >= SEARCH_RESULT_CAP) break;
+              send({ type: 'searchResult', cfi: result.cfi, excerpt: result.excerpt, fraction: await fractionForCfi(result.cfi) });
+              count++;
+            }
+            if (count >= SEARCH_RESULT_CAP) break;
+          }
+        } catch (e) { console.log('[engine] search error', e); }
+        if (token === searchToken) send({ type: 'searchDone', count });
+      })();
+      break;
+    }
+    case 'searchCancel':
+      searchToken++;
+      try { view.clearSearch(); } catch { /* pas encore chargé */ }
+      break;
+    case 'ttsStart':
+      // awaited (not a floating IIFE) so unexpected failures surface as one
+      // engineError through the dispatcher, like every other handler
+      await ttsStartAt(msg.cfi);
+      break;
+    case 'ttsNext': ttsEmit('next'); break;
+    case 'ttsStop': tts = null; ttsRange = null; break;
     default: break;
   }
 }
 
 // Navigation/settings arriving before the document finished loading are
 // sanctioned quiet no-ops (T15/T21): foliate throws on an unloaded book and the
-// app legitimately probes while chunks stream. Anything ELSE that throws is a
-// genuine failure (size/protocol mismatch, null assembler…) and must reach the
-// app as an engineError instead of being swallowed into an invisible hang.
-const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings']);
+// app legitimately probes while chunks stream. 'copySelection' likewise needs a
+// loaded doc (it walks renderer.getContents()), and search/searchCancel touch
+// view.search/view.clearSearch which require an open book; ttsStart builds a
+// TTS over the section doc and ttsNext steps an existing instance, so both need
+// the load too. 'ttsStop' stays OUT of the allowlist per the Task 14 brief:
+// nulling the (null) TTS state pre-load is a safe no-op. Anything ELSE that
+// throws is a genuine failure (size/protocol mismatch, null assembler…) and
+// must reach the app as an engineError instead of being swallowed into an
+// invisible hang.
+const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'copySelection', 'addHighlight', 'removeHighlight', 'search', 'searchCancel', 'ttsStart', 'ttsNext']);
 
 onAppMessage((msg) => {
   void (async () => {

@@ -69,3 +69,62 @@ describe('ReaderBridge', () => {
     expect(JSON.parse(outbox[0]!)).toMatchObject({ type: 'goTo', target: 'epubcfi(6/2!/4)' });
   });
 });
+
+describe('v1.x subscriptions and commands', () => {
+  const makeBridge = () => {
+    const sent: string[] = [];
+    const bridge = new ReaderBridge((raw: string) => sent.push(raw), makeTransport([]));
+    return { bridge, sent };
+  };
+
+  it('notifies selection subscribers until unsubscribed', () => {
+    const { bridge } = makeBridge();
+    const seen: unknown[] = [];
+    const off = bridge.onSelectionChanged((s) => seen.push(s));
+    bridge.handleRaw(JSON.stringify({ type: 'selectionChanged', text: 'mot', rect: { x: 1, y: 2, width: 3, height: 4 }, cfi: 'cfi-1', lang: 'fr' }));
+    off();
+    bridge.handleRaw(JSON.stringify({ type: 'selectionChanged', text: null, rect: null, cfi: null, lang: null }));
+    expect(seen).toEqual([{ text: 'mot', rect: { x: 1, y: 2, width: 3, height: 4 }, cfi: 'cfi-1', lang: 'fr' }]);
+  });
+
+  it('notifies search and tts subscribers', () => {
+    const { bridge } = makeBridge();
+    const results: unknown[] = [];
+    const done: number[] = [];
+    const sentences: unknown[] = [];
+    bridge.onSearchResult((r) => results.push(r));
+    bridge.onSearchDone((c) => done.push(c));
+    bridge.onTtsSentence((s) => sentences.push(s));
+    bridge.handleRaw(JSON.stringify({ type: 'searchResult', cfi: 'c1', excerpt: 'x', fraction: 0.1 }));
+    bridge.handleRaw(JSON.stringify({ type: 'searchDone', count: 1 }));
+    bridge.handleRaw(JSON.stringify({ type: 'ttsSentence', text: 'Phrase.', cfi: 'c2' }));
+    expect(results).toEqual([{ cfi: 'c1', excerpt: 'x', fraction: 0.1 }]);
+    expect(done).toEqual([1]);
+    expect(sentences).toEqual([{ text: 'Phrase.', cfi: 'c2' }]);
+  });
+
+  it('notifies chrome toggle subscribers until unsubscribed', () => {
+    const { bridge } = makeBridge();
+    let toggles = 0;
+    const off = bridge.onChromeToggle(() => { toggles += 1; });
+    bridge.handleRaw(JSON.stringify({ type: 'chromeToggle' }));
+    off();
+    bridge.handleRaw(JSON.stringify({ type: 'chromeToggle' }));
+    expect(toggles).toBe(1);
+  });
+
+  it('emits highlight, search and tts commands', () => {
+    const { bridge, sent } = makeBridge();
+    bridge.addHighlight('a1', 'cfi-9', 'green');
+    bridge.removeHighlight('a1');
+    bridge.copySelection();
+    bridge.search('mot');
+    bridge.searchCancel();
+    bridge.ttsStart(null);
+    bridge.ttsStop();
+    bridge.ttsNext();
+    expect(sent.map((s) => JSON.parse(s) as { type: string }).map((m) => m.type)).toEqual([
+      'addHighlight', 'removeHighlight', 'copySelection', 'search', 'searchCancel', 'ttsStart', 'ttsStop', 'ttsNext',
+    ]);
+  });
+});
