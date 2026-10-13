@@ -90,6 +90,9 @@ export function createLookupService(deps: LookupDeps = {}): LookupService {
         throw new LookupError('offline');
       }
       if (res.status === 404) continue;
+      // 501 = this edition does not implement the definition endpoint at all
+      // (fr.wiktionary answers it for every word) — try the next edition
+      if (res.status === 501) continue;
       if (!res.ok) throw new LookupError('service_error', `wiktionary ${sub}: HTTP ${res.status}`);
       const json = (await res.json()) as Record<string, unknown>;
       const senses = parseDefinitions(json);
