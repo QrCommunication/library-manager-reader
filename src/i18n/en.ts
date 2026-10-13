@@ -20,6 +20,15 @@ export const en = {
     },
     untitled: 'Untitled',
   },
+  trash: {
+    title: 'Trash',
+    hint: 'Deleted books stay recoverable for {{days}} days',
+    empty: 'The trash is empty',
+    daysLeft: '{{days}} days left',
+    restore: 'Restore',
+    purge: 'Delete permanently',
+    emptyTrash: 'Empty trash',
+  },
   common: {
     cancel: 'Cancel',
     delete: 'Delete',

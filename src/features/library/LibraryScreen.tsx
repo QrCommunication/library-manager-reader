@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
@@ -16,6 +16,7 @@ import { useWindowLayout } from '../../ui/windowClasses';
 import { BookGridItem } from './BookGridItem';
 import { ImportResultsSheet, type ImportOutcome } from './ImportResultsSheet';
 import { getHeadlessEngine } from '../../core/reader/headlessEngine';
+import { purgeExpiredTrash } from '../../core/library/trashService';
 import { seedIfEmpty } from '../../dev/seed';
 
 const SORTS: SortKey[] = ['recent', 'added', 'title', 'series'];
@@ -39,6 +40,13 @@ export function LibraryScreen() {
   const [menuBook, setMenuBook] = useState<Book | null>(null);
   const { books, seriesList, refresh } = useBooks(sort, query, seriesFilter);
   const { columns } = useWindowLayout();
+
+  // trash retention sweep: expired tombstones (and their files) go for good
+  useEffect(() => {
+    void purgeExpiredTrash({ fs: services.fs, paths: services.paths, books: services.books }).catch(() => {});
+    // services is the app-wide singleton
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const addBooks = async () => {
     const result = await DocumentPicker.getDocumentAsync({ multiple: true, type: [...SUPPORTED_MIME], copyToCacheDirectory: true });
@@ -69,10 +77,9 @@ export function LibraryScreen() {
     }
   };
 
+  // tombstone only: files stay on disk for the 30-day trash window
   const deleteBook = async (book: Book) => {
     await services.books.markDeleted(book.id, Date.now());
-    await services.fs.remove(services.paths.bookPath(book.id, book.format)).catch(() => {});
-    await services.fs.remove(services.paths.coverPath(book.id)).catch(() => {});
     setMenuBook(null);
     await refresh();
   };
@@ -82,15 +89,26 @@ export function LibraryScreen() {
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
       <View style={styles.titleRow}>
         <Text style={[styles.title, { color: t0.foreground }]}>{t('library.title')}</Text>
-        <Pressable
-          onPress={() => router.push('/settings')}
-          accessibilityLabel={t('settings.title')}
-          accessibilityRole="button"
-          hitSlop={12}
-          style={[styles.iconButton, { borderColor: t0.border }]}
-        >
-          <Ionicons name="settings-outline" size={20} color={t0.foreground} />
-        </Pressable>
+        <View style={styles.titleActions}>
+          <Pressable
+            onPress={() => router.push('/trash')}
+            accessibilityLabel={t('trash.title')}
+            accessibilityRole="button"
+            hitSlop={12}
+            style={[styles.iconButton, { borderColor: t0.border }]}
+          >
+            <Ionicons name="trash-outline" size={20} color={t0.foreground} />
+          </Pressable>
+          <Pressable
+            onPress={() => router.push('/settings')}
+            accessibilityLabel={t('settings.title')}
+            accessibilityRole="button"
+            hitSlop={12}
+            style={[styles.iconButton, { borderColor: t0.border }]}
+          >
+            <Ionicons name="settings-outline" size={20} color={t0.foreground} />
+          </Pressable>
+        </View>
       </View>
       <View style={[styles.search, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
         <Ionicons name="search" size={16} color={t0.muted} />
@@ -222,6 +240,7 @@ export function LibraryScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, paddingHorizontal: 16 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, marginBottom: 12 },
+  titleActions: { flexDirection: 'row', gap: 8 },
   title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.5 },
   iconButton: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 42, marginBottom: 10 },

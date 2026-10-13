@@ -57,14 +57,21 @@ describe('LibraryScreen', () => {
     expect(await screen.findByText('Votre bibliothèque est vide')).toBeOnTheScreen();
   });
 
-  it('renders books after seeding and deletes via long-press menu', async () => {
+  it('deletes via long-press menu, keeping files so the trash can restore', async () => {
     const services = await makeServices();
-    await services.books.createBook({ title: 'Dune', author: 'F. Herbert', format: 'epub', originalFormat: null, fileName: 'd.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    const remove = jest.fn(async (_p: string) => {});
+    services.fs.remove = remove;
+    const b = await services.books.createBook({ title: 'Dune', author: 'F. Herbert', format: 'epub', originalFormat: null, fileName: 'd.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
     await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
     expect(await screen.findByText('Dune')).toBeOnTheScreen();
     fireEvent(await screen.findByText('Dune'), 'longPress');
     fireEvent.press(await screen.findByText('Supprimer'));
-    await waitFor(async () => expect(screen.queryByText('Dune')).toBeNull());
+    await waitFor(async () => {
+      expect(screen.queryByText('Dune')).toBeNull();
+      expect((await services.books.listDeleted()).map((x: { id: string }) => x.id)).toEqual([b.id]);
+    });
+    // tombstone only: files survive until a trash purge
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it('sorts by series with tome order and keeps series-less books last', async () => {

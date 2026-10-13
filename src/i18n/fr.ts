@@ -20,6 +20,15 @@ export const fr = {
     },
     untitled: 'Sans titre',
   },
+  trash: {
+    title: 'Corbeille',
+    hint: 'Les livres supprimés restent récupérables {{days}} jours',
+    empty: 'La corbeille est vide',
+    daysLeft: 'Encore {{days}} j',
+    restore: 'Restaurer',
+    purge: 'Supprimer définitivement',
+    emptyTrash: 'Vider la corbeille',
+  },
   common: {
     cancel: 'Annuler',
     delete: 'Supprimer',
