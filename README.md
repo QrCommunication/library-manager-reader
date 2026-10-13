@@ -1,56 +1,52 @@
-# Welcome to your Expo app 👋
+# Library Manager Reader
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+*Read this in [French (Français)](README.fr.md)*
 
-## Get started
+Offline e-book reader for Android and iOS, built with [Expo](https://expo.dev) and React Native.
 
-1. Install dependencies
+## About
 
-   ```bash
-   npm install
-   ```
+Library Manager Reader lets you import, organize and read your e-books anywhere, with no network connection required. Version 1 is 100% offline; a later version will synchronize your library and reading progress with the [library-manager.com](https://library-manager.com) cloud.
 
-2. Start the app
+## Features
 
-   ```bash
-   npx expo start
-   ```
+- **Formats**: EPUB, MOBI / AZW3, CBZ / CBR (CBR is converted to CBZ at import; original files are never modified)
+- **Library**: cover grid, search, sorting, import through the system document picker, per-file import results
+- **Reading**: reflow rendering, tap zones for page turns, resume at last position, automatic progress saving
+- **Navigation**: table of contents, bookmarks with excerpts
+- **Typography**: font family (including Literata), size, line height, margins
+- **Themes**: day / sepia / night, applied to the interface and book content
+- **Languages**: French and English interface
+- **Privacy-first storage**: local SQLite database, tombstone deletion with 30-day purge
 
-In the output, you'll find options to open the app in a
+## Tech stack
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+| Layer | Technology |
+|---|---|
+| Framework | Expo SDK 57, React Native, TypeScript (strict) |
+| Rendering engine | [foliate-js](https://github.com/johnfactotum/foliate-js) in a WebView |
+| Storage | expo-sqlite, expo-file-system |
+| UI state | zustand |
+| i18n | i18next (fr / en) |
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Development
 
 ```bash
-npm run reset-project
+npm install
+npm start          # Expo dev server
+npm test           # unit + component tests
+npm run test:db    # database integration tests (node:sqlite)
+npm run typecheck  # TypeScript strict
+npm run lint       # ESLint
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+A development seed is available in dev builds: long-press the empty-library message to import bundled sample books.
 
-### Other setup steps
+## Roadmap
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+- **V1 (this version)** — fully offline reading experience
+- **V2** — synchronization with the library-manager.com cloud
 
-## Learn more
+## License
 
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
