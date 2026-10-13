@@ -55,6 +55,7 @@
     "eslint-config-expo": "^57.0.2",
     "jest": "^29.7.0",
     "jest-expo": "^57.0.6",
+    "patch-package": "^8.0.1",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -63,7 +64,8 @@
     "test:db": "jest --config jest.db.config.js",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
-    "build:engine": "node scripts/build-engine.mjs"
+    "build:engine": "node scripts/build-engine.mjs",
+    "postinstall": "patch-package"
   },
   "private": true
 }
