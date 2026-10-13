@@ -87,7 +87,9 @@ const cssFor = (s: ReaderSettings): string => {
     sepia: { bg: '#F4ECD8', fg: '#3B2F1E', link: '#8B5E34' },
     night: { bg: '#101314', fg: '#D7DBDC', link: '#7FB4C9' },
   } as const;
-  const t = themes[s.theme];
+  // defensive: the app resolves 'auto' before applySettings, but if an 'auto'
+  // theme ever reached the engine it must not break — fall back to day
+  const t = themes[s.theme === 'auto' ? 'day' : s.theme];
   const family = s.fontFamily === 'sans' ? 'system-ui, sans-serif'
     : s.fontFamily === 'literata' ? 'Literata, serif' : 'Georgia, serif';
   return `@namespace epub "http://www.idpf.org/2007/ops";
@@ -100,7 +102,7 @@ const applySettings = (s: ReaderSettings): void => {
   view.renderer.setStyles?.(cssFor(s));
   Object.assign(container.style, {
     padding: `${s.margin}px`,
-    background: { day: '#FFFFFF', sepia: '#F4ECD8', night: '#101314' }[s.theme],
+    background: { day: '#FFFFFF', sepia: '#F4ECD8', night: '#101314' }[s.theme === 'auto' ? 'day' : s.theme],
   });
 };
 

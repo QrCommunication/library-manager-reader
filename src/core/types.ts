@@ -1,6 +1,15 @@
 export type BookFormat = 'epub' | 'mobi' | 'azw3' | 'cbz';
 export type OriginalFormat = BookFormat | 'cbr';
-export type ThemeName = 'day' | 'sepia' | 'night';
+export type ThemeName = 'day' | 'sepia' | 'night' | 'auto';
+
+// 'auto' is only meaningful app-side (follows the system dark mode); every
+// consumer that renders or sends a theme must resolve it to a concrete one
+// before token lookup / engine transmission. null scheme (undetermined)
+// resolves to the light theme.
+export function resolveTheme(theme: ThemeName, system: 'light' | 'dark' | null): 'day' | 'sepia' | 'night' {
+  if (theme !== 'auto') return theme;
+  return system === 'dark' ? 'night' : 'day';
+}
 
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'red';
 

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Appearance } from 'react-native';
 import { useServices, type AppServices } from '../../core/services';
 import { ReaderBridge, type SearchResultPayload, type SelectionPayload, type TtsSentencePayload } from '../../core/reader/bridge';
 import { createBase64BookTransport } from '../../core/reader/bookTransport';
 import { useReaderSettingsStore } from '../settings/readerSettingsStore';
+import { resolveTheme } from '../../core/types';
 import type { BookFormat, HighlightColor, ReaderSettings, TocItem } from '../../core/types';
 
 export interface BridgeLike {
@@ -138,7 +140,16 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
       bridge.onEngineError(() => { if (!cancelled) { setErrorKind('open_failed'); setState('error'); } });
       try {
         const loaded = await bridge.openBook({ format: book.format, path: deps.bookPath(book.fileName), size: book.fileSize });
-        bridge.applySettings(useReaderSettingsStore.getState().settings);
+        // theme resolved BEFORE transmission: the engine only knows concrete
+        // themes (its cssFor still defaults 'auto'→'day' defensively). The
+        // scheme is read imperatively (not the hook) so the value is current at
+        // apply time without re-running the open flow on later scheme flips —
+        // ReaderScreen owns the reactive re-apply. 'unspecified' normalizes to
+        // null (resolveTheme's undetermined case).
+        const openSettings = useReaderSettingsStore.getState().settings;
+        const scheme = Appearance.getColorScheme();
+        const systemScheme: 'light' | 'dark' | null = scheme === 'light' || scheme === 'dark' ? scheme : null;
+        bridge.applySettings({ ...openSettings, theme: resolveTheme(openSettings.theme, systemScheme) });
         const prog = await deps.getProgress(bookId);
         const lastKnown = lastKnownRef.current?.bookId === bookId ? lastKnownRef.current : null;
         if (lastKnown) {

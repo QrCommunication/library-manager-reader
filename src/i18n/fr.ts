@@ -43,6 +43,7 @@ export const fr = {
     size: 'Taille',
     lineHeight: 'Interligne',
     margins: 'Marges',
+    brightness: 'Luminosité',
     tts: 'Lecture audio',
   },
   tts: {
@@ -91,6 +92,7 @@ export const fr = {
       day: 'Jour',
       sepia: 'Sépia',
       night: 'Nuit',
+      auto: 'Auto',
     },
     storage: 'Stockage',
     about: 'À propos',

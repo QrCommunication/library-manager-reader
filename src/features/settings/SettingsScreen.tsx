@@ -20,6 +20,9 @@ const THEMES: { value: ThemeName; labelKey: string }[] = [
   { value: 'day', labelKey: 'settings.theme.day' },
   { value: 'sepia', labelKey: 'settings.theme.sepia' },
   { value: 'night', labelKey: 'settings.theme.night' },
+  // 'auto' is stored as-is in both stores; resolution to day/night happens at
+  // render time (reader chrome, engine cssFor fallback), never in the stores
+  { value: 'auto', labelKey: 'settings.theme.auto' },
 ];
 
 export function SettingsScreen() {

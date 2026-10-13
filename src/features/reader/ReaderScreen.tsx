@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import * as ExpoSpeech from 'expo-speech';
@@ -17,6 +17,7 @@ import { SelectionPopover, type SelectionState } from './SelectionPopover';
 import { DefinitionSheet } from './DefinitionSheet';
 import { TtsBar } from './TtsBar';
 import { useReaderSettingsStore } from '../settings/readerSettingsStore';
+import { resolveTheme } from '../../core/types';
 import type { ReaderBridge } from '../../core/reader/bridge';
 import { uuidV7 } from '../../core/uuid';
 import { themeTokens } from '../../theme/tokens';
@@ -34,6 +35,10 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
   const router = useRouter();
   const { settings, update } = useReaderSettingsStore();
   const { state, errorKind, title, fraction, toc, bridge, retry } = useReaderSession(bookId);
+  const scheme = useColorScheme();
+  // react-native reports 'unspecified' when the scheme is undetermined:
+  // normalize to null so resolveTheme keeps its light/dark/null signature
+  const systemScheme: 'light' | 'dark' | null = scheme === 'light' || scheme === 'dark' ? scheme : null;
   const { panel: panelSurface } = useWindowLayout();
   const sideDrawer = panelSurface === 'side';
   const [chromeVisible, setChromeVisible] = useState(false);
@@ -83,6 +88,15 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
     return () => { cancelled = true; };
   }, [state, bridge, bookId, services]);
 
+  // re-apply RESOLVED settings whenever the session becomes ready, a setting
+  // changes or the system scheme flips: theme 'auto' follows dark mode while
+  // reading (useReaderSession resolved only at open time). Resolving here keeps
+  // 'auto' out of the engine, which only knows concrete themes.
+  useEffect(() => {
+    if (state !== 'ready' || !bridge) return;
+    (bridge as ReaderBridge).applySettings({ ...settings, theme: resolveTheme(settings.theme, systemScheme) });
+  }, [state, bridge, settings, systemScheme]);
+
   // Non-ready layouts keep the engine WebView mounted whenever a bridge exists
   // (loading AND error states): the engine's engineReady announcement can only
   // arrive through the WebView's onMessage, so unmounting the WebView while
@@ -121,8 +135,13 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
   const navigateFromPanel = (target: string) => { closePanel(); noteNavigation(); reader.goTo(target); };
 
   return (
-    <View style={[styles.root, { backgroundColor: themeTokens(settings.theme).background }]}>
+    <View style={[styles.root, { backgroundColor: themeTokens(resolveTheme(settings.theme, systemScheme)).background }]}>
       <EngineWebView bridge={reader} onFatal={retry} onReload={retry} />
+      {settings.brightness > 0 ? (
+        // brightness dimming: full-screen black veil ABOVE the engine content,
+        // BELOW the tap zones and chrome — never intercepts touches
+        <View pointerEvents="none" style={[styles.brightness, { opacity: settings.brightness / 100 }]} />
+      ) : null}
       <View style={styles.overlay} pointerEvents="box-none">
         <Pressable style={styles.zoneSide} pointerEvents="box-only" onPress={() => { noteNavigation(); reader.prev(); }} />
         <Pressable style={styles.zoneCenter} pointerEvents="box-only" onPress={() => setChromeVisible((v) => !v)} />
@@ -243,6 +262,7 @@ const styles = StyleSheet.create({
   button: { borderWidth: 1, borderColor: '#2D6CDF', borderRadius: 8, paddingHorizontal: 20, paddingVertical: 10 },
   deleteButton: { borderColor: '#C0392B' },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row' },
+  brightness: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' },
   zoneSide: { flex: 1 },
   zoneCenter: { flex: 2 },
   topBar: {

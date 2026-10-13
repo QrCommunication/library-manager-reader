@@ -43,6 +43,7 @@ export const en = {
     size: 'Size',
     lineHeight: 'Line height',
     margins: 'Margins',
+    brightness: 'Brightness',
     tts: 'Text-to-speech',
   },
   tts: {
@@ -91,6 +92,7 @@ export const en = {
       day: 'Day',
       sepia: 'Sepia',
       night: 'Night',
+      auto: 'Auto',
     },
     storage: 'Storage',
     about: 'About',
