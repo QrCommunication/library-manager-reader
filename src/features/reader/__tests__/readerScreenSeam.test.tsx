@@ -1,4 +1,5 @@
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react-native';
 import { ReaderScreen } from '../ReaderScreen';
 import { ServicesProvider } from '../../../core/services';
@@ -21,6 +22,7 @@ jest.mock('react-native-webview', () => {
   const sendToBridge = (onMessage: { onMessage: SeamOnMessage } | null, msg: unknown) => {
     onMessage?.onMessage({ nativeEvent: { data: JSON.stringify(msg) } });
   };
+  (globalThis as Record<string, unknown>).__seamPageEmit = (msg: unknown) => sendToBridge(mockLatestProps, msg);
   return {
     __esModule: true,
     WebView: React.forwardRef(function SeamWebView(props: { onMessage: SeamOnMessage }, ref: React.Ref<unknown>) {
@@ -52,9 +54,24 @@ jest.mock('react-native-webview', () => {
   };
 });
 
+// engine→app messages the real page can emit at will (openSettings, chromeToggle…)
+const pageEmit = (msg: unknown): void => {
+  (globalThis as { __seamPageEmit?: (m: unknown) => void }).__seamPageEmit?.(msg);
+};
+
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
 }));
+
+// pin the compact phone layout: RNTL's default window (750px) would route
+// panels to the side drawer and mask the bottom-drawer regression
+jest.mock('../../../ui/windowClasses', () => {
+  const actual = jest.requireActual('../../../ui/windowClasses');
+  return {
+    ...actual,
+    useWindowLayout: () => ({ width: 412, height: 915, sizeClass: 'compact', landscape: false, columns: 2, panel: 'bottom' }),
+  };
+});
 
 const fakeFs = () => ({
   freeDiskBytes: async () => 1e9, ensureDir: async () => {}, copy: async () => {}, exists: async () => true,
@@ -124,5 +141,20 @@ describe('ReaderScreen engine seam', () => {
     await waitFor(() => expect(screen.queryByText('Chargement…')).toBeNull(), { timeout: 5000 });
     expect(screen.queryByText('Impossible d’ouvrir ce livre')).toBeNull();
     expect(mockPosted.filter((m) => m.includes('"openBook"'))).toHaveLength(2);
+  });
+
+  it('gives the bottom drawer an explicit height on phone (flex:1 panels collapse in an auto-height parent)', async () => {
+    const services = await makeServices();
+    await render(
+      <ServicesProvider value={services}>
+        <ReaderScreen bookId="b1" />
+      </ServicesProvider>,
+    );
+    await waitFor(() => expect(screen.queryByText('Chargement…')).toBeNull(), { timeout: 5000 });
+    // the engine's top-center tap zone asks the app to surface reading settings
+    pageEmit({ type: 'openSettings' });
+    const drawer = await screen.findByTestId('reader-drawer');
+    const style = StyleSheet.flatten(drawer.props.style as never);
+    expect(style).toEqual(expect.objectContaining({ height: '65%' }));
   });
 });

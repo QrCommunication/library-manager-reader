@@ -17,12 +17,17 @@ const mockMakeBook = jest.fn();
 // concentration live-toggle: the section doc the renderer reports + setStyles calls
 let mockCurrentDoc: unknown = null;
 const mockStyleCalls: string[] = [];
+// margin must travel through the paginator attribute (foliate's sanctioned
+// re-render-with-anchor path), never as padding on #book
+const mockRendererAttrs: [string, string][] = [];
+const mockBookEl: { append: jest.Mock; style: Record<string, string> } = { append: jest.fn(), style: {} };
 
 jest.mock('foliate-js/view.js', () => ({
   View: class {
     // no renderer pre-open (mirrors real foliate: renderer exists only after open)
     renderer = {
       setStyles(css: string): void { mockStyleCalls.push(css); },
+      setAttribute(name: string, value: string): void { mockRendererAttrs.push([name, value]); },
       getContents(): { index: number; doc?: unknown }[] {
         return mockCurrentDoc ? [{ index: 0, doc: mockCurrentDoc }] : [];
       },
@@ -93,7 +98,7 @@ jest.mock('node-unrar-js', () => ({ createExtractorFromData: jest.fn() }));
 beforeAll(() => {
   (globalThis as { document: unknown }).document = {
     addEventListener: jest.fn(),
-    getElementById: () => ({ append: jest.fn(), style: {} }),
+    getElementById: () => mockBookEl,
   };
   const w = window as unknown as Record<string, unknown>;
   w.addEventListener = jest.fn();
@@ -443,6 +448,31 @@ describe('engine concentration mode (bionic word starts)', () => {
     await flush();
     expect(boldSegments(doc.body)).toHaveLength(0);
     expect(plainText(doc.body)).toBe('Bonjour le monde');
+  });
+});
+
+describe('engine applies reader margin through the paginator attribute', () => {
+  const BASE = {
+    fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 32,
+    theme: 'day', ttsRate: 1, brightness: 0, concentration: false,
+  };
+
+  beforeEach(async () => {
+    posted = [];
+    mockRendererAttrs.length = 0;
+    mockStyleCalls.length = 0;
+    for (const k of Object.keys(mockBookEl.style)) delete mockBookEl.style[k];
+    // unlock post-load settings handling (documentLoaded)
+    fireLoad(makeStubDoc('intro'));
+    await flush();
+  });
+
+  it('routes margin to renderer.setAttribute (px) and never pads #book', async () => {
+    feed({ type: 'applySettings', settings: { ...BASE } });
+    await flush();
+    expect(mockRendererAttrs).toContainEqual(['margin', '32px']);
+    expect(mockBookEl.style.padding).toBeUndefined();
+    expect(posted.some((m) => m.type === 'engineError')).toBe(false);
   });
 });
 

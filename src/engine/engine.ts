@@ -161,10 +161,12 @@ const applyConcentration = (doc: Document, on: boolean): void => {
 
 const applySettings = (s: ReaderSettings): void => {
   view.renderer.setStyles?.(cssFor(s));
-  Object.assign(container.style, {
-    padding: `${s.margin}px`,
-    background: { day: '#FFFFFF', sepia: '#F4ECD8', night: '#101314' }[s.theme === 'auto' ? 'day' : s.theme],
-  });
+  // margin goes through the paginator's own observed attribute: foliate
+  // re-columnizes the SAME iframe document and restores the anchor. Padding on
+  // #book instead resized the paginator host mid-reading and the anchor restore
+  // across that resize lost the page on device (blank/off-screen content).
+  view.renderer.setAttribute('margin', `${s.margin}px`);
+  container.style.background = { day: '#FFFFFF', sepia: '#F4ECD8', night: '#101314' }[s.theme === 'auto' ? 'day' : s.theme];
 };
 
 let bookLanguage: string | null = null;

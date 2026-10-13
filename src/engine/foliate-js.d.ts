@@ -34,6 +34,7 @@ declare module 'foliate-js/view.js' {
       next(): Promise<void>;
       prev(): Promise<void>;
       setStyles?(css: string): void;
+      setAttribute(name: string, value: string): void;
       getContents(): { index: number; doc?: Document }[];
     };
   }
