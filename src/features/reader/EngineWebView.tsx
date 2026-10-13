@@ -33,6 +33,10 @@ export function EngineWebView({ bridge, onFatal, onReload }: { bridge: ReaderBri
         originWhitelist={['*']}
         javaScriptEnabled
         setSupportMultipleWindows={false}
+        // suppresses Android's native text-selection action mode: selection
+        // still works in the engine, but only the app's SelectionPopover
+        // (Définir/Traduire/Copier/Surligner) appears
+        contextMenuHidden
         onMessage={onMessage}
         onRenderProcessGone={onGone}
         onError={onGone}

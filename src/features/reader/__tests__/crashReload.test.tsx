@@ -68,4 +68,9 @@ describe('EngineWebView crash recovery', () => {
     expect(gate({ url: 'https://evil.example/page' })).toBe(false);
     expect(gate({ url: 'file:///sdcard/evil.html' })).toBe(false);
   });
+
+  it('hides the native selection menu so the app popover (with Copier) shows instead', async () => {
+    await render(<EngineWebView bridge={fakeBridge} onReload={onReload} onFatal={onFatal} />);
+    expect(mockWebViewProps?.contextMenuHidden).toBe(true);
+  });
 });
