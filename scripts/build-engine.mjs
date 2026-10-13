@@ -11,13 +11,23 @@ const literataB64 = readFileSync(
   join(root, 'node_modules/@fontsource/literata/files/literata-latin-400-normal.woff2'),
 ).toString('base64');
 
+// node-unrar-js wasm embedded as base64: the WebView html has no base URL, so unrar's
+// default locateFile("unrar.wasm") + fetch/XHR could never resolve. Inlined via define
+// and handed to createExtractorFromData({ wasmBinary }) — zero network at runtime.
+const unrarWasmB64 = readFileSync(
+  join(root, 'node_modules/node-unrar-js/esm/js/unrar.wasm'),
+).toString('base64');
+
 await build({
   entryPoints: [join(root, 'src/engine/engine.ts')],
   bundle: true,
   format: 'iife',
   minify: true,
   outfile,
-  define: { __LITERATA_B64__: JSON.stringify(literataB64) },
+  define: {
+    __LITERATA_B64__: JSON.stringify(literataB64),
+    __UNRAR_WASM_B64__: JSON.stringify(unrarWasmB64),
+  },
   logLevel: 'info',
 });
 

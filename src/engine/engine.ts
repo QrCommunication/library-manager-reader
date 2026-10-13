@@ -7,6 +7,23 @@ import { zipSync, strToU8 } from 'fflate';
 import type { OriginalFormat, ReaderSettings, TocItem } from '../core/types';
 
 declare const __LITERATA_B64__: string;
+declare const __UNRAR_WASM_B64__: string;
+
+// node-unrar-js wasm, inlined at build time (build-engine.mjs define). The engine html is
+// inlined into the WebView with no base URL, so unrar's emscripten glue could never fetch
+// "unrar.wasm"; handing the real bytes to createExtractorFromData({ wasmBinary }) makes the
+// glue skip every fetch/XHR path. Decoded lazily (memoized): only the CBR path pays for it.
+let unrarWasmBinary: ArrayBuffer | null = null;
+function getUnrarWasmBinary(): ArrayBuffer {
+  if (!unrarWasmBinary) {
+    const bin = atob(__UNRAR_WASM_B64__);
+    const ab = new ArrayBuffer(bin.length);
+    const bytes = new Uint8Array(ab);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    unrarWasmBinary = ab;
+  }
+  return unrarWasmBinary;
+}
 
 function send(msg: EngineToApp): void {
   // @ts-expect-error RN webview injection
@@ -119,7 +136,10 @@ async function imagesFromRar(data: Uint8Array): Promise<{ name: string; data: Ui
   const ab = data.byteOffset === 0 && data.byteLength === data.buffer.byteLength
     ? data.buffer
     : data.slice().buffer;
-  const extractor = await createExtractorFromData({ data: ab as ArrayBuffer });
+  const extractor = await createExtractorFromData({
+    wasmBinary: getUnrarWasmBinary(),
+    data: ab as ArrayBuffer,
+  });
   const list = extractor.getFileList();
   const headers = [...list.fileHeaders].filter((h) => /\.(jpe?g|png|gif|webp|bmp)$/i.test(h.name));
   const extracted = extractor.extract({ files: headers.map((h) => h.name) });
