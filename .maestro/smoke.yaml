@@ -1,0 +1,12 @@
+appId: com.librarymanager.reader
+---
+- launchApp
+- assertVisible: "Bibliothèque"
+- longPressOn: "Votre bibliothèque est vide"   # dev build: seeds sample books
+- tapOn: "Sample EPUB"
+- assertVisible: "Sample EPUB"
+- swipe: { direction: LEFT }
+- swipe: { direction: LEFT }
+- swipe: { direction: LEFT }
+- tapOn: { point: "50%, 8%" }
+- assertVisible: ".*%$"

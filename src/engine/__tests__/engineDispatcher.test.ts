@@ -1,0 +1,85 @@
+// Engine dispatcher seam tests: the engine module is written for the WebView
+// (DOM globals, foliate View, injected RN bridge), so this suite stubs the DOM
+// surface and mocks foliate/node-unrar, then requires the REAL engine module.
+// Load-bearing behavior under test: handler exceptions must surface as a single
+// engineError postMessage instead of being silently swallowed (invisible hang),
+// while pre-open navigation/settings stay sanctioned quiet no-ops.
+
+type EngineMsg = { type: string; code?: string; message?: string };
+let posted: EngineMsg[] = [];
+let bootMessages: EngineMsg[] = [];
+
+jest.mock('foliate-js/view.js', () => ({
+  View: class {
+    // no renderer pre-open (mirrors real foliate: renderer exists only after open)
+    renderer: undefined;
+    book = { metadata: { title: 'T', author: null, language: null, publisher: null, identifier: null } };
+    addEventListener(): void { /* tests never fire 'load'/'relocate' */ }
+    removeEventListener(): void {}
+    async open(): Promise<void> {}
+    goTo(): void { throw new Error('goTo on unloaded book'); }
+    goToFraction(): void { throw new Error('goToFraction on unloaded book'); }
+  },
+}));
+
+// keep the emscripten unrar glue out of the node test process
+jest.mock('node-unrar-js', () => ({ createExtractorFromData: jest.fn() }));
+
+beforeAll(() => {
+  (globalThis as { document: unknown }).document = {
+    addEventListener: jest.fn(),
+    getElementById: () => ({ append: jest.fn(), style: {} }),
+  };
+  const w = window as unknown as Record<string, unknown>;
+  w.addEventListener = jest.fn();
+  w.ReactNativeWebView = {
+    postMessage: (raw: string) => { posted.push(JSON.parse(raw) as EngineMsg); },
+  };
+  require('../engine'); // registers its dispatcher as an import side effect
+  bootMessages = posted;
+});
+
+// feed an app→engine message through the DOM listener the engine registered
+const feed = (msg: unknown): void => {
+  const doc = globalThis.document as unknown as { addEventListener: jest.Mock };
+  const call = doc.addEventListener.mock.calls.find((c: unknown[]) => c[0] === 'message');
+  if (!call) throw new Error('engine did not register a message listener');
+  (call[1] as (raw: unknown) => void)({ data: JSON.stringify(msg) });
+};
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+const engineErrors = () => posted.filter((m) => m.type === 'engineError');
+
+describe('engine dispatcher error surfacing', () => {
+  beforeEach(() => { posted = []; });
+
+  it('announces engineReady on boot through the injected bridge', () => {
+    expect(bootMessages).toEqual([expect.objectContaining({ type: 'engineReady', protocolVersion: 1 })]);
+  });
+
+  it('surfaces a handler exception as one engineError and keeps handling', async () => {
+    // data before any openBook: assembler is null → handle throws
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    expect(engineErrors()).toHaveLength(1);
+    expect(engineErrors()[0]).toMatchObject({ code: 'unknown' });
+    // subsequent messages must still be processed (no poisoned dispatcher):
+    // a chunk overflowing the declared size makes the assembler throw again
+    feed({ type: 'openBook', format: 'epub', size: 1 });
+    feed({ type: 'data', seq: 0, base64: 'QQI=' }); // 2 bytes > declared 1
+    await flush();
+    expect(engineErrors()).toHaveLength(2);
+    expect(engineErrors()[1]).toMatchObject({ code: 'unknown' });
+  });
+
+  it('quiet-ignores pre-open navigation/settings (sanctioned T15/T21)', async () => {
+    feed({ type: 'goTo', target: 'epubcfi(6/2)' });
+    feed({ type: 'goToFraction', fraction: 0.5 });
+    feed({ type: 'next' });
+    feed({ type: 'prev' });
+    feed({ type: 'applySettings', settings: { fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day' } });
+    await flush();
+    expect(engineErrors()).toHaveLength(0);
+    expect(posted.filter((m) => m.type !== 'engineReady')).toHaveLength(0);
+  });
+});
