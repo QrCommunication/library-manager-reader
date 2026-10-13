@@ -2,6 +2,7 @@ export default {
   expo: {
     name: 'Library Reader',
     slug: 'library-reader',
+    owner: 'ronylicha',
     version: '0.1.0',
     // follow device orientation: Fold cover/inner transitions, tablets and
     // landscape phones are first-class layouts (reader reflows via foliate)
