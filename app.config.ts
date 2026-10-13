@@ -12,5 +12,10 @@ export default {
     android: { package: 'com.librarymanager.reader', adaptiveIcon: { foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#ffffff' } },
     plugins: ['expo-router'],
     experiments: { typedRoutes: true },
+    extra: {
+      eas: {
+        projectId: '35e9a773-cf50-4fec-95b3-bec4a785b2af',
+      },
+    },
   },
 };
