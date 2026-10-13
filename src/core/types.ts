@@ -14,7 +14,7 @@ export function resolveTheme(theme: ThemeName, system: 'light' | 'dark' | null):
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'red';
 
 export interface SelectionRect { x: number; y: number; width: number; height: number }
-export type FontFamilyOption = 'serif' | 'sans' | 'literata';
+export type FontFamilyOption = 'serif' | 'sans' | 'literata' | 'lexend' | 'atkinson' | 'opendyslexic';
 export type LanguagePref = 'auto' | 'fr' | 'en';
 
 export interface Book {
@@ -87,7 +87,7 @@ export interface BookMetadata {
 
 export interface ReaderSettings {
   fontFamily: FontFamilyOption;
-  fontSize: number; // px, 12–32
+  fontSize: number; // px, 10–40 (accessibility range)
   lineHeight: number; // 1.2–2.2
   margin: number; // px, 0–64
   theme: ThemeName;

@@ -99,8 +99,14 @@ const cssFor = (s: ReaderSettings): string => {
   // defensive: the app resolves 'auto' before applySettings, but if an 'auto'
   // theme ever reached the engine it must not break — fall back to day
   const t = themes[s.theme === 'auto' ? 'day' : s.theme];
-  const family = s.fontFamily === 'sans' ? 'system-ui, sans-serif'
-    : s.fontFamily === 'literata' ? 'Literata, serif' : 'Georgia, serif';
+  const family = {
+    serif: 'Georgia, serif',
+    sans: 'system-ui, sans-serif',
+    literata: 'Literata, Georgia, serif',
+    lexend: 'Lexend, system-ui, sans-serif',
+    atkinson: '"Atkinson Hyperlegible", Verdana, sans-serif',
+    opendyslexic: 'OpenDyslexic, Verdana, sans-serif',
+  }[s.fontFamily];
   return `@namespace epub "http://www.idpf.org/2007/ops";
     body{background:${t.bg};color:${t.fg};font-family:${family};font-size:${s.fontSize}px;line-height:${s.lineHeight};}
     a{color:${t.link};}
