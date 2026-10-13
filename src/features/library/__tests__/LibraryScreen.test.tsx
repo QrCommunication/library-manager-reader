@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 import { LibraryScreen } from '../LibraryScreen';
 import { ServicesProvider } from '../../../core/services';
@@ -107,6 +107,37 @@ describe('LibraryScreen', () => {
     fireEvent.press(screen.getByText('Fondation (2)'));
     expect(await screen.findByText('Dune')).toBeOnTheScreen();
     await waitFor(() => expect(screen.getByText('Standalone')).toBeOnTheScreen());
+  });
+
+  it('lists detected series in a sheet and filters the grid from it', async () => {
+    const services = await makeServices();
+    const mk = (title: string, series: string | null, index: number | null) =>
+      services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series, seriesIndex: index, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    await mk('Fondation T1', 'Fondation', 1);
+    await mk('Fondation T2', 'Fondation', 2);
+    await mk('Dune', 'Dune', 1);
+    await mk('Standalone', null, null);
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent.press(await screen.findByLabelText('Séries'));
+    const sheet = within(await screen.findByTestId('series-sheet'));
+    // every detected series is listed with its tome count
+    expect(sheet.getByText('Fondation')).toBeOnTheScreen();
+    expect(sheet.getByText('Dune')).toBeOnTheScreen();
+    fireEvent.press(sheet.getByText('Dune'));
+    // picking a series closes the sheet and filters the grid
+    await waitFor(() => expect(screen.queryByTestId('series-sheet')).toBeNull());
+    expect(await screen.findByText('Dune')).toBeOnTheScreen();
+    await waitFor(() => expect(screen.queryByText('Fondation T1')).toBeNull());
+    fireEvent.press(screen.getByText('Dune (1)')); // chip clears the filter
+    expect(await screen.findByText('Fondation T1')).toBeOnTheScreen();
+  });
+
+  it('shows the empty hint in the series sheet when no series exists', async () => {
+    const services = await makeServices();
+    await services.books.createBook({ title: 'Standalone', author: null, format: 'epub', originalFormat: null, fileName: 's.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent.press(await screen.findByLabelText('Séries'));
+    expect(await screen.findByText('Aucune série détectée')).toBeOnTheScreen();
   });
 
   it('surfaces a pre-import crash (headless engine) in the results sheet with its detail', async () => {

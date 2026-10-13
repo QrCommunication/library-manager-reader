@@ -18,6 +18,8 @@ export const en = {
       info: 'Info',
       delete: 'Delete',
     },
+    series: 'Series',
+    seriesEmpty: 'No series detected',
     untitled: 'Untitled',
   },
   trash: {

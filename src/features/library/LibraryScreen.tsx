@@ -38,6 +38,7 @@ export function LibraryScreen() {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [outcomes, setOutcomes] = useState<ImportOutcome[] | null>(null);
   const [menuBook, setMenuBook] = useState<Book | null>(null);
+  const [seriesSheet, setSeriesSheet] = useState(false);
   const { books, seriesList, refresh } = useBooks(sort, query, seriesFilter);
   const { columns } = useWindowLayout();
 
@@ -90,6 +91,15 @@ export function LibraryScreen() {
       <View style={styles.titleRow}>
         <Text style={[styles.title, { color: t0.foreground }]}>{t('library.title')}</Text>
         <View style={styles.titleActions}>
+          <Pressable
+            onPress={() => setSeriesSheet(true)}
+            accessibilityLabel={t('library.series')}
+            accessibilityRole="button"
+            hitSlop={12}
+            style={[styles.iconButton, { borderColor: t0.border }]}
+          >
+            <Ionicons name="albums-outline" size={20} color={t0.foreground} />
+          </Pressable>
           <Pressable
             onPress={() => router.push('/trash')}
             accessibilityLabel={t('trash.title')}
@@ -209,6 +219,32 @@ export function LibraryScreen() {
         {importing ? <ActivityIndicator color={t0.onAccent} /> : <Ionicons name="add" size={28} color={t0.onAccent} />}
       </Pressable>
 
+      <Modal visible={seriesSheet} transparent animationType="fade" onRequestClose={() => setSeriesSheet(false)}>
+        <Pressable style={styles.sheetBackdrop} onPress={() => setSeriesSheet(false)}>
+          <View style={[styles.sheet, { backgroundColor: t0.chrome, paddingBottom: 16 + insets.bottom }]} testID="series-sheet">
+            <View style={styles.sheetHandle}>
+              <View style={[styles.sheetHandleBar, { backgroundColor: t0.border }]} />
+            </View>
+            <Text style={[styles.sheetTitle, { color: t0.foreground }]}>{t('library.series')}</Text>
+            {seriesList.length === 0 ? (
+              <Text style={[styles.seriesEmpty, { color: t0.muted }]}>{t('library.seriesEmpty')}</Text>
+            ) : (
+              seriesList.map((s) => (
+                <Pressable
+                  key={s.name}
+                  style={styles.sheetRow}
+                  onPress={() => { setSeriesFilter(s.name); setSeriesSheet(false); }}
+                >
+                  <Ionicons name="albums-outline" size={20} color={t0.foreground} />
+                  <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>{s.name}</Text>
+                  <Text style={[styles.seriesCount, { color: t0.muted }]}>{s.count}</Text>
+                </Pressable>
+              ))
+            )}
+          </View>
+        </Pressable>
+      </Modal>
+
       <Modal visible={menuBook !== null} transparent animationType="fade" onRequestClose={() => setMenuBook(null)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setMenuBook(null)}>
           <View style={[styles.sheet, { backgroundColor: t0.chrome, paddingBottom: 16 + insets.bottom }]}>
@@ -271,4 +307,7 @@ const styles = StyleSheet.create({
   sheetTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
   sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14 },
   sheetRowText: { fontSize: 15 },
+  sheetRowMain: { flex: 1 },
+  seriesEmpty: { fontSize: 14, paddingVertical: 12 },
+  seriesCount: { fontSize: 14, fontWeight: '600' },
 });

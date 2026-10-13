@@ -18,6 +18,8 @@ export const fr = {
       info: 'Informations',
       delete: 'Supprimer',
     },
+    series: 'Séries',
+    seriesEmpty: 'Aucune série détectée',
     untitled: 'Sans titre',
   },
   trash: {
