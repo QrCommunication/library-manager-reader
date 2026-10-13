@@ -103,6 +103,16 @@ describe('v1.x subscriptions and commands', () => {
     expect(sentences).toEqual([{ text: 'Phrase.', cfi: 'c2' }]);
   });
 
+  it('notifies chrome toggle subscribers until unsubscribed', () => {
+    const { bridge } = makeBridge();
+    let toggles = 0;
+    const off = bridge.onChromeToggle(() => { toggles += 1; });
+    bridge.handleRaw(JSON.stringify({ type: 'chromeToggle' }));
+    off();
+    bridge.handleRaw(JSON.stringify({ type: 'chromeToggle' }));
+    expect(toggles).toBe(1);
+  });
+
   it('emits highlight, search and tts commands', () => {
     const { bridge, sent } = makeBridge();
     bridge.addHighlight('a1', 'cfi-9', 'green');

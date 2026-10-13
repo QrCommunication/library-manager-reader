@@ -29,6 +29,7 @@ export interface BridgeLike {
   onSearchResult(cb: (r: SearchResultPayload) => void): () => void;
   onSearchDone(cb: (count: number) => void): () => void;
   onTtsSentence(cb: (s: TtsSentencePayload) => void): () => void;
+  onChromeToggle(cb: () => void): () => void;
 }
 
 export interface ReaderSessionDeps {

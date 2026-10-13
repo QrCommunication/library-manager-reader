@@ -47,6 +47,11 @@ describe('additive v1.x messages', () => {
     for (const m of msgs) expect(parseMessage(encodeMessage(m))).toEqual(m);
   });
 
+  it('round-trips chromeToggle', () => {
+    const msg = { type: 'chromeToggle' } as const;
+    expect(parseMessage(encodeMessage(msg))).toEqual(msg);
+  });
+
   it('still rejects unknown engine types', () => {
     expect(parseMessage(JSON.stringify({ type: 'notAThing' })).type).toBe('unknown');
   });

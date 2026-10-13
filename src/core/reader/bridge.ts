@@ -18,6 +18,7 @@ export class ReaderBridge {
   private searchResultCbs = new Set<(r: SearchResultPayload) => void>();
   private searchDoneCbs = new Set<(count: number) => void>();
   private ttsSentenceCbs = new Set<(s: TtsSentencePayload) => void>();
+  private chromeToggleCbs = new Set<() => void>();
   private bookLoadedWaiter: { resolve: (v: { toc: TocItem[]; metadata: EngineMetadataPayload }) => void; reject: (e: Error) => void } | null = null;
   private ackWaiters: ((seq: number) => void)[] = [];
   private lastAck = -1;
@@ -76,6 +77,9 @@ export class ReaderBridge {
         break;
       case 'ttsSentence':
         for (const cb of this.ttsSentenceCbs) cb({ text: msg.text, cfi: msg.cfi });
+        break;
+      case 'chromeToggle':
+        for (const cb of this.chromeToggleCbs) cb();
         break;
       default:
         break;
@@ -151,4 +155,5 @@ export class ReaderBridge {
   onSearchResult(cb: (r: SearchResultPayload) => void): () => void { this.searchResultCbs.add(cb); return () => this.searchResultCbs.delete(cb); }
   onSearchDone(cb: (count: number) => void): () => void { this.searchDoneCbs.add(cb); return () => this.searchDoneCbs.delete(cb); }
   onTtsSentence(cb: (s: TtsSentencePayload) => void): () => void { this.ttsSentenceCbs.add(cb); return () => this.ttsSentenceCbs.delete(cb); }
+  onChromeToggle(cb: () => void): () => void { this.chromeToggleCbs.add(cb); return () => this.chromeToggleCbs.delete(cb); }
 }

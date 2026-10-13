@@ -6,6 +6,8 @@ declare module 'foliate-js/view.js' {
     open(book: Blob): Promise<void>;
     goTo(target: string): Promise<unknown>;
     goToFraction(fraction: number): Promise<void>;
+    prev(distance?: number): Promise<void>;
+    next(distance?: number): Promise<void>;
     getCFI(index: number, range: Range): string;
     resolveNavigation(target: string): Promise<{ index: number; anchor?: unknown }>;
     addAnnotation(annotation: { id?: string; value: string }, remove?: boolean): Promise<{ index: number; label?: string }>;

@@ -201,7 +201,29 @@ view.addEventListener('load', (e: Event) => {
     const doc = detail.doc;
     const index = detail.index ?? 0;
     // the paginator emits no selection events: watch the section doc ourselves
-    doc.addEventListener('selectionchange', () => queueSelection(doc, index));
+    let collapsedAt = 0;
+    doc.addEventListener('selectionchange', () => {
+      const sel = doc.getSelection();
+      if (sel && sel.isCollapsed) collapsedAt = Date.now();
+      queueSelection(doc, index);
+    });
+    // Page taps live in the engine document: the former RN tap zones sat above
+    // the WebView and swallowed every touch, so the long-press that starts
+    // native text selection never reached the doc. Guards keep a mid-selection
+    // gesture and book links from turning pages; collapsedAt (scoped to this
+    // section doc, so it resets on every 'load') makes the tap that DISMISSES
+    // a selection not flip the page in the same gesture.
+    doc.addEventListener('click', (e: MouseEvent) => {
+      const sel = doc.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      if (collapsedAt && Date.now() - collapsedAt < 400) return;
+      const target = e.target as Element | null;
+      if (target && typeof target.closest === 'function' && target.closest('a')) return;
+      const x = e.clientX / (doc.documentElement.clientWidth || 1);
+      if (x < 0.33) void view.prev();
+      else if (x > 0.67) void view.next();
+      else send({ type: 'chromeToggle' });
+    });
   }
   const book = view.book;
   send({

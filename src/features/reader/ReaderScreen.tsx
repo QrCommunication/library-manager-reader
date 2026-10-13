@@ -66,6 +66,13 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
     });
   }, [bridge]);
 
+  // Chrome toggling comes from the engine document (middle-third tap): the RN
+  // tap zones were removed because they blocked native text selection.
+  useEffect(() => {
+    if (!bridge) return;
+    return bridge.onChromeToggle(() => setChromeVisible((v) => !v));
+  }, [bridge]);
+
   // clearing on position change must not wait for an effect tick (stale
   // popovers must not survive a page turn) — render-time adjustment, the same
   // pattern as useReaderSession's session key
@@ -139,14 +146,10 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
       <EngineWebView bridge={reader} onFatal={retry} onReload={retry} />
       {settings.brightness > 0 ? (
         // brightness dimming: full-screen black veil ABOVE the engine content,
-        // BELOW the tap zones and chrome — never intercepts touches
+        // BELOW the chrome — never intercepts touches (page taps are handled
+        // inside the engine document)
         <View pointerEvents="none" style={[styles.brightness, { opacity: settings.brightness / 100 }]} />
       ) : null}
-      <View style={styles.overlay} pointerEvents="box-none">
-        <Pressable style={styles.zoneSide} pointerEvents="box-only" onPress={() => { noteNavigation(); reader.prev(); }} />
-        <Pressable style={styles.zoneCenter} pointerEvents="box-only" onPress={() => setChromeVisible((v) => !v)} />
-        <Pressable style={styles.zoneSide} pointerEvents="box-only" onPress={() => { noteNavigation(); reader.next(); }} />
-      </View>
       {chromeVisible ? (
         <>
           <View style={styles.topBar} pointerEvents="box-none">
@@ -261,10 +264,7 @@ const styles = StyleSheet.create({
   errorText: { textAlign: 'center' },
   button: { borderWidth: 1, borderColor: '#2D6CDF', borderRadius: 8, paddingHorizontal: 20, paddingVertical: 10 },
   deleteButton: { borderColor: '#C0392B' },
-  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row' },
   brightness: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' },
-  zoneSide: { flex: 1 },
-  zoneCenter: { flex: 2 },
   topBar: {
     position: 'absolute', top: 0, left: 0, right: 0, height: 56,
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 12,
