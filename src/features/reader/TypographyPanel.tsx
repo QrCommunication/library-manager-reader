@@ -16,11 +16,11 @@ export function TypographyPanel({ settings, onSettingsChange }: {
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
       <Text style={[styles.sectionLabel, { color: th.muted }]}>{t('reader.font')}</Text>
-      <View style={styles.segmentRow}>
+      <View style={styles.fontRow}>
         {FONT_OPTIONS.map((option) => (
           <Pressable
             key={option.value}
-            style={[styles.segment, { borderColor: th.accent }, settings.fontFamily === option.value && { backgroundColor: th.accent }]}
+            style={[styles.fontChip, { borderColor: th.accent }, settings.fontFamily === option.value && { backgroundColor: th.accent }]}
             onPress={() => patch({ fontFamily: option.value })}
           >
             <Text style={[styles.segmentText, { color: th.accent }, settings.fontFamily === option.value && { color: th.onAccent, fontWeight: '600' }]}>
@@ -33,7 +33,8 @@ export function TypographyPanel({ settings, onSettingsChange }: {
       <Stepper
         label={t('reader.size')}
         value={settings.fontSize}
-        min={12} max={32} step={1} decimals={0}
+        min={10} max={40} step={1} decimals={0}
+        accessibilityLabel="fontSize"
         onChange={(v) => patch({ fontSize: v })}
       />
       <Stepper
@@ -77,6 +78,9 @@ const FONT_OPTIONS: { value: FontFamilyOption; labelKey: string }[] = [
   { value: 'serif', labelKey: 'reader.fontSerif' },
   { value: 'sans', labelKey: 'reader.fontSans' },
   { value: 'literata', labelKey: 'reader.fontLiterata' },
+  { value: 'lexend', labelKey: 'reader.fontLexend' },
+  { value: 'atkinson', labelKey: 'reader.fontAtkinson' },
+  { value: 'opendyslexic', labelKey: 'reader.fontOpenDyslexic' },
 ];
 
 const THEME_OPTIONS: { value: ThemeName; labelKey: string }[] = [
@@ -134,6 +138,11 @@ const styles = StyleSheet.create({
   content: { padding: 12, gap: 12 },
   sectionLabel: { fontSize: 13, fontWeight: '700' },
   segmentRow: { flexDirection: 'row', gap: 8 },
+  fontRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  fontChip: {
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: 8, borderWidth: 1,
+  },
   segment: {
     flex: 1, alignItems: 'center', paddingVertical: 10,
     borderRadius: 8, borderWidth: 1,

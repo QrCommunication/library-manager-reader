@@ -59,4 +59,41 @@ describe('TypographyPanel', () => {
     await fireEvent.press(screen.getByText('Auto'));
     expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ theme: 'auto' }));
   });
+
+  it.each(['Lexend', 'Atkinson', 'OpenDyslexic'])('offers the %s reading font and emits it on selection', async (label) => {
+    const onSettingsChange = jest.fn();
+    await render(
+      <TypographyPanel settings={BASE_SETTINGS} onSettingsChange={onSettingsChange} />,
+    );
+    await fireEvent.press(screen.getByText(label));
+    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({
+      fontFamily: label === 'Lexend' ? 'lexend' : label === 'Atkinson' ? 'atkinson' : 'opendyslexic',
+    }));
+  });
+
+  it('bounds fontSize to the 10-40 accessibility range', async () => {
+    const onSettingsChange = jest.fn();
+    function Harness() {
+      const [settings, setSettings] = useState<ReaderSettings>(BASE_SETTINGS);
+      return (
+        <TypographyPanel
+          settings={settings}
+          onSettingsChange={(next) => { onSettingsChange(next); setSettings(next); }}
+        />
+      );
+    }
+    await render(<Harness />);
+    const plus = screen.getByLabelText('fontSize+');
+    const minus = screen.getByLabelText('fontSize-');
+    for (let press = 0; press < 22; press += 1) {
+      await fireEvent.press(plus); // step 1: 18 → 40
+    }
+    expect(onSettingsChange).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: 40 }));
+    expect(plus).toBeDisabled();
+    for (let press = 0; press < 30; press += 1) {
+      await fireEvent.press(minus); // step 1: 40 → 10
+    }
+    expect(onSettingsChange).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: 10 }));
+    expect(minus).toBeDisabled();
+  });
 });
