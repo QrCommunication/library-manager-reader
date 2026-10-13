@@ -19,6 +19,7 @@ export function createAppServices(): Promise<AppServices> {
       const services = createServices({ db, fs: createExpoFsAdapter(), root: documentRoot(), newId: uuidV7 });
       await services.paths.ensureAll();
       await services.books.purgeDeletedBefore(computePurgeCutoff(Date.now()));
+      await services.annotations.purgeDeletedBefore(computePurgeCutoff(Date.now()));
       return services;
     })().catch((err: unknown) => {
       servicesPromise = null;

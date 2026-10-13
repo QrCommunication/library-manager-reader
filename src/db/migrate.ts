@@ -1,6 +1,6 @@
 import type { DbDriver } from './driver';
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -44,6 +44,20 @@ const MIGRATIONS: Record<number, string> = {
       value TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+  `,
+  2: `
+    CREATE TABLE annotations (
+      id TEXT PRIMARY KEY,
+      book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      cfi TEXT NOT NULL,
+      color TEXT NOT NULL,
+      note TEXT,
+      excerpt TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    );
+    CREATE INDEX idx_annotations_book ON annotations(book_id, deleted_at);
   `,
 };
 
