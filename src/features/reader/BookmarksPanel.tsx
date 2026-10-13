@@ -23,7 +23,11 @@ export function BookmarksPanel({ bookId, bridge, onNavigate }: {
     setItems(await bookmarks.listByBook(bookId));
   }, [bookmarks, bookId]);
 
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => {
+    void (async () => {
+      setItems(await bookmarks.listByBook(bookId));
+    })();
+  }, [bookmarks, bookId]);
 
   const add = async () => {
     setAdding(true);

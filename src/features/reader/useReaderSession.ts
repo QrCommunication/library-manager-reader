@@ -71,14 +71,28 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
   const [toc, setToc] = useState<TocItem[]>([]);
   const [title, setTitle] = useState<string | null>(null);
   const [fraction, setFraction] = useState(0);
-  const bridgeRef = useRef<BridgeLike | null>(null);
+  // render-visible session state (ReaderScreen gates on it), not a ref
+  const [bridge, setBridge] = useState<BridgeLike | null>(null);
   // survives unmount/retry so a post-crash reload reopens at the last known spot
   const lastKnownRef = useRef<{ bookId: string; cfi: string | null; fraction: number; sectionIndex: number | null } | null>(null);
   const [nonce, setNonce] = useState(0);
   const retry = useCallback(() => setNonce((n) => n + 1), []);
 
-  useEffect(() => {
+  // reset to 'loading' whenever the session is re-triggered (retry / book change),
+  // mirroring the effect deps below; done during render per the React
+  // "adjusting state when a key changes" pattern instead of the effect body
+  const [sessionKey, setSessionKey] = useState({ bookId, nonce, defaultDeps, depsOverride });
+  if (
+    sessionKey.bookId !== bookId ||
+    sessionKey.nonce !== nonce ||
+    sessionKey.defaultDeps !== defaultDeps ||
+    sessionKey.depsOverride !== depsOverride
+  ) {
+    setSessionKey({ bookId, nonce, defaultDeps, depsOverride });
     setState('loading');
+  }
+
+  useEffect(() => {
     let cancelled = false;
     const deps = depsOverride ?? defaultDeps;
     if (!deps) return;
@@ -92,7 +106,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
         return;
       }
       const bridge = deps.makeBridge();
-      bridgeRef.current = bridge;
+      setBridge(bridge);
       offProgress = bridge.onProgress((p) => {
         const f = Math.min(1, Math.max(0, p.fraction));
         latest = { cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex };
@@ -123,5 +137,5 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
     };
   }, [bookId, nonce, defaultDeps, depsOverride]);
 
-  return { state, errorKind, toc, title, fraction, bridge: bridgeRef.current, retry };
+  return { state, errorKind, toc, title, fraction, bridge, retry };
 }
