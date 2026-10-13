@@ -38,6 +38,15 @@ describe('settingsRepo', () => {
     expect(prefs.libreTranslateApiKey).toBe('73d6bbf4-eaba-4bbf-ad82-d58f9ccba23d');
   });
 
+  it('merges the translateTarget default into a stored pre-field prefs row', async () => {
+    const db = createNodeSqliteDriver(new DatabaseSync(':memory:'));
+    await migrate(db);
+    await db.run('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)', ['uiPrefs', JSON.stringify({ language: 'fr' }), 1]);
+    const repo = createSettingsRepo(db);
+    const prefs = await repo.getUiPrefs();
+    expect(prefs.translateTarget).toBe('fr');
+  });
+
   it('merges new ttsRate/brightness defaults into a stored pre-tts readerSettings row', async () => {
     const db = createNodeSqliteDriver(new DatabaseSync(':memory:'));
     await migrate(db);

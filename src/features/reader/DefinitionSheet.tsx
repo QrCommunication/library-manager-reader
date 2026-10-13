@@ -21,12 +21,11 @@ export function DefinitionSheet({ word, lang, initialMode, onClose }: {
 }) {
   const { t, i18n } = useTranslation();
   const th = useReaderTheme();
-  const { lookup } = useServices();
+  const { lookup, settings: settingsService } = useServices();
   const [mode, setMode] = useState<LookupMode>(initialMode);
   const [senses, setSenses] = useState<DefinitionSense[] | null>(null);
   const [translation, setTranslation] = useState<string | null>(null);
   const [errorKind, setErrorKind] = useState<LookupErrorKind | null>(null);
-  const target = i18n.language === 'fr' ? 'fr' : 'en';
   const [nonce, setNonce] = useState(0);
 
   // every setState happens after an await (mirrors useReaderSession's effect)
@@ -39,7 +38,10 @@ export function DefinitionSheet({ word, lang, initialMode, onClose }: {
           if (!cancelled) setSenses(found);
         } else {
           // 'auto' lets the server detect the source language when the book
-          // carries none, instead of silently assuming English
+          // carries none, instead of silently assuming English; the target is
+          // the user's Réglages choice, falling back to the UI language
+          const prefs = await settingsService.getUiPrefs();
+          const target = prefs.translateTarget || (i18n.language === 'fr' ? 'fr' : 'en');
           const translated = await lookup.translate(word, lang ?? 'auto', target);
           if (!cancelled) setTranslation(translated);
         }
@@ -48,7 +50,7 @@ export function DefinitionSheet({ word, lang, initialMode, onClose }: {
       }
     })();
     return () => { cancelled = true; };
-  }, [mode, word, lang, target, lookup, nonce]);
+  }, [mode, word, lang, lookup, nonce, settingsService, i18n.language]);
 
   // clear previous results before a new lookup (mode switch or retry)
   const reset = () => { setSenses(null); setTranslation(null); setErrorKind(null); };

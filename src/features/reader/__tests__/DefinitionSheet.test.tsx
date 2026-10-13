@@ -5,8 +5,13 @@ import { DefinitionSheet } from '../DefinitionSheet';
 import { LookupError } from '../../../core/lookup/lookupService';
 import { initI18n } from '../../../i18n';
 
-const baseServices = (lookup: unknown) => ({
-  settings: { getReaderSettings: async () => ({ fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0 }), putReaderSettings: async () => {}, getUiPrefs: async () => ({ language: 'fr', defaultTheme: 'day', libreTranslateUrl: 'https://x', libreTranslateApiKey: '' }), putUiPrefs: async () => {} },
+const baseServices = (lookup: unknown, translateTarget?: string) => ({
+  settings: {
+    getReaderSettings: async () => ({ fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0 }),
+    putReaderSettings: async () => {},
+    getUiPrefs: async () => ({ language: 'fr', defaultTheme: 'day', libreTranslateUrl: 'https://x', libreTranslateApiKey: '', ...(translateTarget ? { translateTarget } : {}) }),
+    putUiPrefs: async () => {},
+  },
   lookup,
 }) as never;
 
@@ -44,6 +49,20 @@ describe('DefinitionSheet', () => {
     );
     expect(await screen.findByText('traduit')).toBeOnTheScreen();
     expect(lookup.translate).toHaveBeenCalledWith('wort', 'auto', 'fr');
+  });
+
+  it('translates toward the target language configured in settings', async () => {
+    const lookup = {
+      define: jest.fn(async () => []),
+      translate: jest.fn(async () => 'palabra'),
+    };
+    await render(
+      <ServicesProvider value={baseServices(lookup, 'es')}>
+        <DefinitionSheet word="wort" lang={null} initialMode="translate" onClose={() => {}} />
+      </ServicesProvider>,
+    );
+    expect(await screen.findByText('palabra')).toBeOnTheScreen();
+    expect(lookup.translate).toHaveBeenCalledWith('wort', 'auto', 'es');
   });
 
   it('renders the offline error state', async () => {

@@ -45,7 +45,9 @@ describe('SettingsScreen', () => {
 
   it('updates the language pref and re-initializes i18n when a language option is pressed', async () => {
     await render(<ServicesProvider value={services}><SettingsScreen /></ServicesProvider>);
-    fireEvent.press(await screen.findByText('English'));
+    // 'English' also exists as a translation-target chip (native name); the
+    // app-language radios render above that row, so the first match is the one
+    fireEvent.press(screen.getAllByText('English')[0]!);
     expect(initI18n).toHaveBeenCalledWith('en');
     expect(useUiPrefsStore.getState().prefs.language).toBe('en');
   });
@@ -67,5 +69,11 @@ describe('SettingsScreen', () => {
     await render(<ServicesProvider value={services}><SettingsScreen /></ServicesProvider>);
     expect(screen.queryByText('URL LibreTranslate')).toBeNull();
     expect(screen.queryByText('Clé API LibreTranslate')).toBeNull();
+  });
+
+  it('persists the chosen translation target language', async () => {
+    await render(<ServicesProvider value={services}><SettingsScreen /></ServicesProvider>);
+    fireEvent.press(await screen.findByText('Deutsch'));
+    expect(useUiPrefsStore.getState().prefs.translateTarget).toBe('de');
   });
 });

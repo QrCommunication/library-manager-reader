@@ -27,6 +27,19 @@ const THEMES: { value: ThemeName; labelKey: string }[] = [
   { value: 'auto', labelKey: 'settings.theme.auto' },
 ];
 
+// LibreTranslate server's supported languages (GET /languages); native names —
+// they read the same in every UI locale
+const TRANSLATE_TARGETS: { code: string; label: string }[] = [
+  { code: 'fr', label: 'Français' },
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Español' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'it', label: 'Italiano' },
+  { code: 'pt', label: 'Português' },
+  { code: 'he', label: 'עברית' },
+  { code: 'ar', label: 'العربية' },
+];
+
 export function SettingsScreen() {
   const { t, i18n } = useTranslation();
   const services = useServices();
@@ -101,6 +114,26 @@ export function SettingsScreen() {
         })}
       </View>
 
+      <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.translateTarget')}</Text>
+      <View style={styles.targetRow}>
+        {TRANSLATE_TARGETS.map((option) => {
+          const active = prefs.translateTarget === option.code;
+          return (
+            <Pressable
+              key={option.code}
+              style={[styles.targetChip, { borderColor: t0.accent }, active && { backgroundColor: t0.accent }]}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: active }}
+              onPress={() => { void update({ translateTarget: option.code }); }}
+            >
+              <Text style={[styles.targetChipText, { color: t0.accent }, active && { color: t0.onAccent, fontWeight: '600' }]}>
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <View style={[styles.infoRow, { borderColor: t0.border }]}>
         <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.storage')}</Text>
         <Text style={[styles.infoValue, { color: t0.muted }]}>{storageBytes === null ? null : formatBytes(storageBytes, lang)}</Text>
@@ -126,6 +159,9 @@ const styles = StyleSheet.create({
   themeRow: { flexDirection: 'row', gap: 8 },
   themeChip: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
   themeChipText: { fontSize: 14 },
+  targetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  targetChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
+  targetChipText: { fontSize: 14 },
   infoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1 },
   infoValue: { fontSize: 15, fontVariant: ['tabular-nums'] },
 });
