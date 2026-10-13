@@ -15,6 +15,7 @@ import { themeTokens } from '../../theme/tokens';
 import { useWindowLayout } from '../../ui/windowClasses';
 import { BookGridItem } from './BookGridItem';
 import { ImportResultsSheet, type ImportOutcome } from './ImportResultsSheet';
+import { MetadataEditSheet } from './MetadataEditSheet';
 import { getHeadlessEngine } from '../../core/reader/headlessEngine';
 import { purgeExpiredTrash } from '../../core/library/trashService';
 import { enrichSeriesFromOpenLibrary, refreshLibraryMetadata } from '../../core/library/metadataRefresh';
@@ -39,6 +40,7 @@ export function LibraryScreen() {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [outcomes, setOutcomes] = useState<ImportOutcome[] | null>(null);
   const [menuBook, setMenuBook] = useState<Book | null>(null);
+  const [editBook, setEditBook] = useState<Book | null>(null);
   const [seriesSheet, setSeriesSheet] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const selectionMode = selection.size > 0;
@@ -126,6 +128,29 @@ export function LibraryScreen() {
       const series = enriched.filter((r) => r.updated).length;
       const failed = results.filter((r) => !r.updated && r.detail).length + enriched.filter((r) => r.detail).length;
       Alert.alert(t('library.refreshDone'), t('library.refreshSummary', { updated, series, failed }));
+      await refresh();
+    } catch (err) {
+      Alert.alert(t('library.refreshDone'), err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefreshingMeta(false);
+      setProgress(null);
+    }
+  };
+
+  // selection-scoped variant: re-extracts only the picked books (no Open
+  // Library pass — filling series is the whole-library button's job)
+  const bulkRefreshMeta = async () => {
+    if (refreshingMeta || importing) return;
+    const ids = [...selection];
+    setRefreshingMeta(true);
+    setProgress({ done: 0, total: ids.length });
+    try {
+      const deps = { fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine() };
+      const results = await refreshLibraryMetadata(deps, (p) => setProgress(p), ids);
+      const updated = results.filter((r) => r.updated).length;
+      const failed = results.length - updated;
+      Alert.alert(t('library.refreshDone'), t('library.refreshSummary', { updated, series: 0, failed }));
+      setSelection(new Set());
       await refresh();
     } catch (err) {
       Alert.alert(t('library.refreshDone'), err instanceof Error ? err.message : String(err));
@@ -232,6 +257,11 @@ export function LibraryScreen() {
             <Ionicons name="close" size={22} color={t0.foreground} />
           </Pressable>
           <Text style={[styles.selectionCount, { color: t0.foreground }]}>{t('library.selected', { count: selection.size })}</Text>
+          <Pressable onPress={() => void bulkRefreshMeta()} hitSlop={8} disabled={refreshingMeta}>
+            <Text style={[styles.selectionRefresh, { color: t0.foreground, opacity: refreshingMeta ? 0.4 : 1 }]}>
+              {t('library.refreshSelected')}
+            </Text>
+          </Pressable>
           <Pressable onPress={bulkDelete} hitSlop={8}>
             <Text style={[styles.selectionDelete, { color: t0.danger }]}>{t('library.deleteSelected', { count: selection.size })}</Text>
           </Pressable>
@@ -335,6 +365,10 @@ export function LibraryScreen() {
               <Ionicons name="information-circle-outline" size={20} color={t0.foreground} />
               <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.info')}</Text>
             </Pressable>
+            <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); setEditBook(b); }}>
+              <Ionicons name="create-outline" size={20} color={t0.foreground} />
+              <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.edit')}</Text>
+            </Pressable>
             <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); setSelection(new Set([b.id])); }}>
               <Ionicons name="checkbox-outline" size={20} color={t0.foreground} />
               <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.select')}</Text>
@@ -348,6 +382,15 @@ export function LibraryScreen() {
       </Modal>
 
       {outcomes && <ImportResultsSheet outcomes={outcomes} onClose={() => setOutcomes(null)} />}
+
+      {editBook ? (
+        <MetadataEditSheet
+          key={editBook.id}
+          book={editBook}
+          onClose={() => setEditBook(null)}
+          onSaved={() => { setEditBook(null); void refresh(); }}
+        />
+      ) : null}
     </View>
   );
 }
@@ -376,6 +419,7 @@ const styles = StyleSheet.create({
     borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 44, marginBottom: 10,
   },
   selectionCount: { flex: 1, fontSize: 14, fontWeight: '700' },
+  selectionRefresh: { fontSize: 14, fontWeight: '700' },
   selectionDelete: { fontSize: 14, fontWeight: '700' },
   grid: { paddingBottom: 96, gap: 4 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingBottom: 60 },

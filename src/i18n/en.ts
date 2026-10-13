@@ -28,6 +28,13 @@ export const en = {
     refreshingMeta: 'Updating {{done}}/{{total}}…',
     refreshDone: 'Metadata updated',
     refreshSummary: '{{updated}} book(s) updated · {{series}} series filled · {{failed}} failure(s)',
+    refreshSelected: 'Update selection',
+    edit: 'Edit',
+    editTitle: 'Edit metadata',
+    fieldTitle: 'Title',
+    fieldAuthor: 'Author',
+    fieldSeries: 'Series',
+    fieldTome: 'Volume',
     untitled: 'Untitled',
   },
   trash: {
@@ -44,6 +51,7 @@ export const en = {
     delete: 'Delete',
     confirm: 'Confirm',
     retry: 'Retry',
+    save: 'Save',
   },
   reader: {
     loading: 'Loading…',

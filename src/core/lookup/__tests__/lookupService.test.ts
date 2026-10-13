@@ -38,6 +38,21 @@ describe('lookupService.define', () => {
     expect((fetched.mock.calls[1] as string[])[0]).toContain('en.wiktionary.org');
   });
 
+  it('falls through a 501 edition (endpoint not deployed there, e.g. fr.wiktionary)', async () => {
+    // fr.wiktionary answers 501 Not Implemented on the definition REST endpoint
+    // for every word — only some editions ship it
+    const fetched = jest.fn()
+      .mockResolvedValueOnce(jsonResponse(501, { error: 'Not implemented' }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        English: [{ partOfSpeech: 'Noun', definitions: [{ definition: 'a house' }] }],
+      }));
+    const service = createLookupService({ fetch: fetched as unknown as typeof fetch });
+    const senses = await service.define('maison', 'fr');
+    expect(senses).toEqual([{ pos: 'Noun', glosses: ['a house'] }]);
+    expect((fetched.mock.calls[0] as string[])[0]).toContain('fr.wiktionary.org');
+    expect((fetched.mock.calls[1] as string[])[0]).toContain('en.wiktionary.org');
+  });
+
   it('maps network rejection to offline', async () => {
     const service = createLookupService({ fetch: jest.fn(async () => { throw new Error('dns'); }) as unknown as typeof fetch });
     await expect(service.define('word', 'en')).rejects.toMatchObject({ kind: 'offline' });

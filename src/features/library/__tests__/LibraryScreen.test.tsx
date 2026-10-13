@@ -177,6 +177,46 @@ describe('LibraryScreen', () => {
     expect(screen.queryByText(/sélectionné/)).toBeNull();
   });
 
+  it('refreshes only the selected books from the bulk metadata action', async () => {
+    const services = await makeServices();
+    const mk = (title: string) =>
+      services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    const a = await mk('Aaa');
+    const b = await mk('Bbb');
+    mockGetEngine.mockReturnValue({
+      extract: async () => ({ metadata: { title: 'Upd', author: null, language: null, publisher: null, identifier: null, series: null, seriesIndex: null }, coverJpegBase64: null, cbzBase64: null }),
+    });
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent(await screen.findByText('Aaa'), 'longPress');
+    fireEvent.press(await screen.findByText('Sélectionner'));
+    fireEvent.press(await screen.findByText('Mettre à jour la sélection'));
+    await waitFor(async () => {
+      expect(await services.books.getBook(a.id)).toMatchObject({ title: 'Upd' });
+    });
+    expect(await services.books.getBook(b.id)).toMatchObject({ title: 'Bbb' });
+  });
+
+  it('edits metadata from the long-press menu with series autocomplete', async () => {
+    const services = await makeServices();
+    const mk = (title: string, series: string | null, index: number | null) =>
+      services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series, seriesIndex: index, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    const dune = await mk('Dune', null, null);
+    await mk('Fondation T1', 'Fondation', 1);
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent(await screen.findByText('Dune'), 'longPress');
+    fireEvent.press(await screen.findByText('Modifier'));
+    const sheet = within(await screen.findByTestId('metadata-edit-sheet'));
+    expect(sheet.getByDisplayValue('Dune')).toBeOnTheScreen();
+    // case-insensitive suggestion from the existing series, tap fills the input
+    await fireEvent.changeText(sheet.getByLabelText('Série'), 'fond');
+    await fireEvent.press(await sheet.findByText('Fondation'));
+    await fireEvent.press(sheet.getByText('Enregistrer'));
+    await waitFor(async () => {
+      expect(await services.books.getBook(dune.id)).toMatchObject({ series: 'Fondation' });
+    });
+    expect(screen.queryByTestId('metadata-edit-sheet')).toBeNull();
+  });
+
   it('refreshes every book metadata from its stored file via the header action', async () => {
     const services = await makeServices();
     const created = await services.books.createBook({ title: 'Wrong', author: null, format: 'epub', originalFormat: null, fileName: 'w.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });

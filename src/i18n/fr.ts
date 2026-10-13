@@ -28,6 +28,13 @@ export const fr = {
     refreshingMeta: 'Mise à jour {{done}}/{{total}}…',
     refreshDone: 'Métadonnées mises à jour',
     refreshSummary: '{{updated}} livre(s) mis à jour · {{series}} série(s) complétée(s) · {{failed}} échec(s)',
+    refreshSelected: 'Mettre à jour la sélection',
+    edit: 'Modifier',
+    editTitle: 'Modifier les métadonnées',
+    fieldTitle: 'Titre',
+    fieldAuthor: 'Auteur',
+    fieldSeries: 'Série',
+    fieldTome: 'Tome',
     untitled: 'Sans titre',
   },
   trash: {
@@ -44,6 +51,7 @@ export const fr = {
     delete: 'Supprimer',
     confirm: 'Confirmer',
     retry: 'Réessayer',
+    save: 'Enregistrer',
   },
   reader: {
     loading: 'Chargement…',
