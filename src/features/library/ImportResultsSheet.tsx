@@ -16,9 +16,12 @@ export function ImportResultsSheet({ outcomes, onClose }: { outcomes: ImportOutc
           <Text style={s.title}>{t('import.results.title')}</Text>
           {outcomes.map((o, index) => (
             // picked duplicates share the same uri — index keeps the keys unique
-            <Text key={`${o.uri}-${index}`} numberOfLines={1}>
-              {o.uri.split('/').pop() ?? o.uri} — {o.ok ? '✓' : t(`import.failed.${o.reason === 'io_error' || o.reason === 'parse_failed' ? 'parse' : o.reason}`)}
-            </Text>
+            <View key={`${o.uri}-${index}`} style={s.row}>
+              <Text numberOfLines={1}>
+                {o.uri.split('/').pop() ?? o.uri} — {o.ok ? '✓' : t(`import.failed.${o.reason === 'io_error' || o.reason === 'parse_failed' ? 'parse' : o.reason}`)}
+              </Text>
+              {!o.ok && o.detail ? <Text numberOfLines={3} style={s.detail}>{o.detail}</Text> : null}
+            </View>
           ))}
         </View>
       </Pressable>
@@ -33,4 +36,6 @@ const s = StyleSheet.create({
   sheetBottom: { borderTopLeftRadius: 16, borderTopRightRadius: 16 },
   sheetSide: { width: 400, maxWidth: '85%', height: '100%', borderTopLeftRadius: 16, borderBottomLeftRadius: 16 },
   title: { fontWeight: '700', fontSize: 16 },
+  row: { gap: 2 },
+  detail: { fontSize: 12, opacity: 0.6, fontFamily: 'monospace' },
 });

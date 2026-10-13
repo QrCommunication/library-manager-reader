@@ -43,7 +43,15 @@ export function LibraryScreen() {
       });
       setOutcomes(results);
     } catch (err) {
+      // failures thrown before/outside runImport (uninitialised headless engine,
+      // picker oddities) would otherwise be invisible on a device build
       console.warn('[library] import failed', err);
+      setOutcomes([{
+        uri: result.assets[0]?.uri ?? 'import',
+        ok: false,
+        reason: 'io_error',
+        detail: err instanceof Error ? err.message : String(err),
+      }]);
     } finally {
       setImporting(false);
       await refresh();

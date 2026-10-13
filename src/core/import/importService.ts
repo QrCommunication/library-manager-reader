@@ -8,7 +8,13 @@ import type { BookFormat, OriginalFormat } from '../types';
 type BooksRepo = { createBook(input: Record<string, unknown> & { fileName: string }): Promise<{ id: string }> };
 
 export type ImportReason = 'unsupported' | 'no_space' | 'parse_failed' | 'io_error';
-export type ImportOutcome = { uri: string; ok: true; bookId: string } | { uri: string; ok: false; reason: ImportReason };
+export type ImportOutcome =
+  | { uri: string; ok: true; bookId: string }
+  // detail carries the underlying error message: without it a device failure
+  // (no console) is undiagnosable — the sheet would only say "unreadable file"
+  | { uri: string; ok: false; reason: ImportReason; detail?: string };
+
+const errDetail = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 export interface ImportDeps {
   fs: FsAdapter;
@@ -30,8 +36,9 @@ export async function runImport(uris: string[], deps: ImportDeps): Promise<Impor
   for (const uri of uris) {
     try {
       outcomes.push(await importOne(uri, deps));
-    } catch {
-      outcomes.push({ uri, ok: false, reason: 'io_error' });
+    } catch (err) {
+      console.warn('[import] failed', uri, err);
+      outcomes.push({ uri, ok: false, reason: 'io_error', detail: errDetail(err) });
     }
   }
   return outcomes;
@@ -42,6 +49,10 @@ async function importOne(uri: string, deps: ImportDeps): Promise<ImportOutcome> 
   if (!original) return { uri, ok: false, reason: 'unsupported' };
 
   const size = await deps.fs.fileSize(uri);
+  // expo-file-system can report -1/undefined-ish sizes for freshly picked cache
+  // files; feeding those to the engine's assembler would hang until the 60s
+  // extraction timeout — fail fast with the value as evidence instead
+  if (!(size > 0)) return { uri, ok: false, reason: 'io_error', detail: `fileSize=${size}` };
   if (!(await hasEnoughSpace(deps.fs, size))) return { uri, ok: false, reason: 'no_space' };
 
   const id = deps.newId?.() ?? uuidV7();
@@ -86,7 +97,7 @@ async function importOne(uri: string, deps: ImportDeps): Promise<ImportOutcome> 
     await deps.fs.remove(tmpPath).catch(() => {});
     await deps.fs.remove(deps.paths.bookPath(id, STORED_EXT[original])).catch(() => {});
     await deps.fs.remove(deps.paths.coverPath(id)).catch(() => {});
-    if (err instanceof ExtractionError) return { uri, ok: false, reason: 'parse_failed' };
+    if (err instanceof ExtractionError) return { uri, ok: false, reason: 'parse_failed', detail: errDetail(err) };
     throw err;
   }
 }

@@ -81,7 +81,27 @@ describe('runImport', () => {
     const extractor = { extract: async () => { throw new ExtractionError('bad zip'); } };
     const outcomes = await runImport(['file:///x/Broken.epub'], baseDeps(fs, { extractor }));
     expect(outcomes[0]).toMatchObject({ ok: false, reason: 'parse_failed' });
+    const first = outcomes[0]!;
+    if (!first.ok) expect(first.detail).toBe('bad zip');
     expect([...fs.files.keys()].filter((k) => k.includes('.importing'))).toHaveLength(0);
+  });
+
+  it('captures the underlying error message on io_error instead of swallowing it', async () => {
+    const fs = makeFs();
+    fs.fileSize = async () => { throw new Error('EACCES: permission denied'); };
+    const outcomes = await runImport(['file:///x/Book.epub'], baseDeps(fs));
+    expect(outcomes[0]).toMatchObject({ ok: false, reason: 'io_error', detail: 'EACCES: permission denied' });
+  });
+
+  it('rejects a picked file reporting size <= 0 with the value in detail', async () => {
+    const fs = makeFs();
+    fs.fileSize = async () => -1; // expo-file-system File.size can report -1 when unknown
+    const extractor = { extract: jest.fn() };
+    const outcomes = await runImport(['file:///x/Book.epub'], baseDeps(fs, { extractor }));
+    expect(outcomes[0]).toMatchObject({ ok: false, reason: 'io_error' });
+    const first = outcomes[0]!;
+    if (!first.ok) expect(first.detail).toContain('-1');
+    expect(extractor.extract).not.toHaveBeenCalled();
   });
 
   it('records the STORED cbz size for a converted cbr, not the picked size', async () => {
