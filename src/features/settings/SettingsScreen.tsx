@@ -47,7 +47,7 @@ export function SettingsScreen() {
   return (
     <ScrollView
       style={[styles.root, { backgroundColor: themeTokens('day').background }]}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, styles.contentWide]}
     >
       <Text style={styles.title}>{t('settings.title')}</Text>
 
@@ -104,6 +104,9 @@ export function SettingsScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { paddingTop: 48, paddingHorizontal: 12, paddingBottom: 24, gap: 8 },
+  // centered column on Fold inner display / tablets — form controls keep a
+  // comfortable width instead of stretching across a 800+ dp window
+  contentWide: { width: '100%', maxWidth: 640, alignSelf: 'center' },
   title: { fontSize: 28, fontWeight: '700', marginBottom: 8 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#CCC' },
   rowActive: { backgroundColor: '#DCE7FB', borderColor: '#2D6CDF' },

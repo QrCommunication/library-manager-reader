@@ -3,7 +3,9 @@ export default {
     name: 'Library Reader',
     slug: 'library-reader',
     version: '0.1.0',
-    orientation: 'portrait',
+    // follow device orientation: Fold cover/inner transitions, tablets and
+    // landscape phones are first-class layouts (reader reflows via foliate)
+    orientation: 'default',
     scheme: 'lmr',
     userInterfaceStyle: 'automatic',
     ios: { bundleIdentifier: 'com.librarymanager.reader', supportsTablet: true },
