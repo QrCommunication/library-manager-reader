@@ -397,11 +397,15 @@ async function finishExtract(requestId: string, format: OriginalFormat, bytes: U
         zip: (files) => zipSync(Object.fromEntries(files.map((f) => [f.name, f.data])) as Record<string, Uint8Array>, { level: 6 }),
       }) as Uint8Array<ArrayBuffer>;
     }
-    // attach the load listener BEFORE opening so the load event cannot be missed
+    // attach the load listener BEFORE opening so the load event cannot be missed;
+    // foliate's open() only prepares the renderer — init() drives the first
+    // render that actually emits 'load' (without it every open waits forever)
     await new Promise<void>((resolve, reject) => {
       const once = () => { view.removeEventListener('load', once); resolve(); };
       view.addEventListener('load', once);
-      void view.open(new File([openBytes], fileNameFor(format))).catch(reject);
+      void view.open(new File([openBytes], fileNameFor(format)))
+        .then(() => view.init({}))
+        .catch(reject);
     });
     // installed foliate emits 'load' with { doc, index } only; metadata lives on view.book (as read by bookLoaded)
     const book = view.book;
@@ -443,7 +447,12 @@ async function handle(msg: AppToEngine): Promise<void> {
           pendingExtract = null;
           void finishExtract(requestId, format, result.bytes);
         } else {
-          try { await view.open(new File([result.bytes], fileNameFor(openFormat))); }
+          try {
+            await view.open(new File([result.bytes], fileNameFor(openFormat)));
+            // bookLoaded is sent by the module-level 'load' listener — which only
+            // fires once init() drives the first render (same as finishExtract)
+            await view.init({});
+          }
           catch (err) { send({ type: 'engineError', code: 'open_failed', message: String(err) }); }
         }
       }

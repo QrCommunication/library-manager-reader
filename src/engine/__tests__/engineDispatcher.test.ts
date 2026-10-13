@@ -11,6 +11,7 @@ let bootMessages: EngineMsg[] = [];
 // open() captures + 'load' listener bookkeeping (mock-prefixed: referenced from the hoisted factory)
 const mockOpened: unknown[] = [];
 const mockLoadListeners: (() => void)[] = [];
+let mockInitCalls = 0;
 
 jest.mock('foliate-js/view.js', () => ({
   View: class {
@@ -29,6 +30,9 @@ jest.mock('foliate-js/view.js', () => ({
       mockOpened.push(file);
       for (const fn of [...mockLoadListeners]) fn();
     }
+    // real foliate: init() drives the first render that makes 'load' fire;
+    // open() alone never displays anything
+    async init(): Promise<void> { mockInitCalls++; }
     goTo(): void { throw new Error('goTo on unloaded book'); }
     goToFraction(): void { throw new Error('goToFraction on unloaded book'); }
   },
@@ -136,6 +140,7 @@ describe('engine opens payloads as named Files (foliate sniffs format from file.
     posted = [];
     mockOpened.length = 0;
     mockLoadListeners.length = 0;
+    mockInitCalls = 0;
     // esbuild define absent under jest: provide the base64 global the engine reads
     (globalThis as Record<string, unknown>).__UNRAR_WASM_B64__ = 'QQ==';
     const { createExtractorFromData } = jest.requireMock('node-unrar-js') as { createExtractorFromData: jest.Mock };
@@ -154,6 +159,7 @@ describe('engine opens payloads as named Files (foliate sniffs format from file.
     expect(mockOpened).toHaveLength(1);
     expect(mockOpened[0]).toBeInstanceOf(File);
     expect((mockOpened[0] as File).name).toBe('book.epub');
+    expect(mockInitCalls).toBe(1);
   });
 
   it('extract epub: opens a File named book.epub and reports success', async () => {
@@ -164,6 +170,7 @@ describe('engine opens payloads as named Files (foliate sniffs format from file.
     expect(res).toMatchObject({ requestId: 'r1', ok: true });
     expect(mockOpened[0]).toBeInstanceOf(File);
     expect((mockOpened[0] as File).name).toBe('book.epub');
+    expect(mockInitCalls).toBe(1);
   });
 
   it('extract cbr: opens the converted archive as a File named book.cbz', async () => {
@@ -175,5 +182,6 @@ describe('engine opens payloads as named Files (foliate sniffs format from file.
     expect(typeof res?.cbzBase64).toBe('string');
     expect(mockOpened[0]).toBeInstanceOf(File);
     expect((mockOpened[0] as File).name).toBe('book.cbz');
+    expect(mockInitCalls).toBe(1);
   });
 });
