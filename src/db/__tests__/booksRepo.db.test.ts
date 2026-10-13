@@ -104,4 +104,56 @@ describe('booksRepo', () => {
       { name: 'Fondation', count: 2 },
     ]);
   });
+
+  it('finds duplicates by drm identifier, case/whitespace-insensitive', async () => {
+    const repo = await setup();
+    await repo.createBook(book({ drmIdentifier: 'urn:isbn:0450018471' }));
+    const dup = await repo.findDuplicate({ identifier: ' URN:isbn:0450018471 ', title: 'Autre Titre', author: null });
+    expect(dup?.title).toBe('Dune');
+  });
+
+  it('falls back to normalized title+author when identifiers differ', async () => {
+    const repo = await setup();
+    await repo.createBook(book({ title: 'Dune', author: 'Frank Herbert', drmIdentifier: 'urn:x:1' }));
+    expect((await repo.findDuplicate({ identifier: 'urn:other', title: '  dune ', author: 'Frank Herbert' }))?.title).toBe('Dune');
+    // author mismatch is NOT a duplicate
+    expect(await repo.findDuplicate({ identifier: null, title: 'Dune', author: 'Quelqu un' })).toBeNull();
+    // missing author on the incoming file must not match a book that has one
+    expect(await repo.findDuplicate({ identifier: null, title: 'Dune', author: null })).toBeNull();
+  });
+
+  it('ignores tombstoned books: re-importing from trash creates a fresh copy', async () => {
+    const repo = await setup();
+    const b = await repo.createBook(book({ title: 'Dune', author: 'Frank Herbert' }));
+    await repo.markDeleted(b.id, Date.now());
+    expect(await repo.findDuplicate({ identifier: null, title: 'Dune', author: 'Frank Herbert' })).toBeNull();
+  });
+
+  it('lists deleted books newest-first and restores them', async () => {
+    const repo = await setup();
+    const a = await repo.createBook(book({ title: 'A' }));
+    const b = await repo.createBook(book({ title: 'B' }));
+    await repo.markDeleted(a.id, 1000);
+    await repo.markDeleted(b.id, 2000);
+    expect((await repo.listDeleted()).map((x) => x.title)).toEqual(['B', 'A']);
+    await repo.restoreBook(a.id);
+    expect((await repo.getBook(a.id))?.deletedAt).toBeNull();
+    expect((await repo.listDeleted()).map((x) => x.title)).toEqual(['B']);
+  });
+
+  it('purges a single book by id (hard delete)', async () => {
+    const repo = await setup();
+    const a = await repo.createBook(book({ title: 'A' }));
+    await repo.purgeBook(a.id);
+    expect(await repo.getBook(a.id)).toBeNull();
+  });
+
+  it('updates supplied metadata fields and bumps updated_at', async () => {
+    const repo = await setup();
+    const a = await repo.createBook(book({ title: 'Vieille entree', series: null, seriesIndex: null }));
+    await repo.updateMetadata(a.id, { series: 'Fondation', seriesIndex: 2, author: 'H. Herbert' });
+    const fresh = await repo.getBook(a.id);
+    expect(fresh).toMatchObject({ title: 'Vieille entree', author: 'H. Herbert', series: 'Fondation', seriesIndex: 2 });
+    expect(fresh!.updatedAt).toBeGreaterThanOrEqual(a.updatedAt);
+  });
 });

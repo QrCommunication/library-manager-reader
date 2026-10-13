@@ -17,22 +17,26 @@ export function ImportResultsSheet({ outcomes, onClose }: { outcomes: ImportOutc
       <Pressable style={[s.backdrop, side && s.backdropSide]} onPress={onClose}>
         <View style={[s.sheet, { backgroundColor: t0.chrome }, side ? s.sheetSide : s.sheetBottom]}>
           <Text style={[s.title, { color: t0.foreground }]}>{t('import.results.title')}</Text>
-          {outcomes.map((o, index) => (
-            // picked duplicates share the same uri — index keeps the keys unique
-            <View key={`${o.uri}-${index}`} style={s.row}>
-              <View style={s.rowHead}>
-                <Ionicons
-                  name={o.ok ? 'checkmark-circle' : 'close-circle'}
-                  size={18}
-                  color={o.ok ? t0.accent : t0.danger}
-                />
-                <Text numberOfLines={1} style={{ flex: 1, color: t0.foreground }}>
-                  {o.uri.split('/').pop() ?? o.uri} — {o.ok ? '✓' : t(`import.failed.${o.reason === 'io_error' || o.reason === 'parse_failed' ? 'parse' : o.reason}`)}
-                </Text>
+          {outcomes.map((o, index) => {
+            // duplicates are informational: same accent tone as successes
+            const icon = o.ok
+              ? { name: 'checkmark-circle' as const, color: t0.accent }
+              : o.reason === 'duplicate'
+                ? { name: 'alert-circle' as const, color: t0.accent }
+                : { name: 'close-circle' as const, color: t0.danger };
+            return (
+              // picked duplicates share the same uri — index keeps the keys unique
+              <View key={`${o.uri}-${index}`} style={s.row}>
+                <View style={s.rowHead}>
+                  <Ionicons name={icon.name} size={18} color={icon.color} />
+                  <Text numberOfLines={1} style={{ flex: 1, color: t0.foreground }}>
+                    {o.uri.split('/').pop() ?? o.uri} — {o.ok ? '✓' : t(`import.failed.${o.reason === 'io_error' || o.reason === 'parse_failed' ? 'parse' : o.reason}`)}
+                  </Text>
+                </View>
+                {!o.ok && o.detail ? <Text numberOfLines={3} style={[s.detail, { color: t0.muted }]}>{o.detail}</Text> : null}
               </View>
-              {!o.ok && o.detail ? <Text numberOfLines={3} style={[s.detail, { color: t0.muted }]}>{o.detail}</Text> : null}
-            </View>
-          ))}
+            );
+          })}
         </View>
       </Pressable>
     </Modal>

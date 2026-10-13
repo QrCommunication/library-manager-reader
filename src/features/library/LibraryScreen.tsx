@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
@@ -16,6 +16,8 @@ import { useWindowLayout } from '../../ui/windowClasses';
 import { BookGridItem } from './BookGridItem';
 import { ImportResultsSheet, type ImportOutcome } from './ImportResultsSheet';
 import { getHeadlessEngine } from '../../core/reader/headlessEngine';
+import { purgeExpiredTrash } from '../../core/library/trashService';
+import { enrichSeriesFromOpenLibrary, refreshLibraryMetadata } from '../../core/library/metadataRefresh';
 import { seedIfEmpty } from '../../dev/seed';
 
 const SORTS: SortKey[] = ['recent', 'added', 'title', 'series'];
@@ -37,8 +39,19 @@ export function LibraryScreen() {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [outcomes, setOutcomes] = useState<ImportOutcome[] | null>(null);
   const [menuBook, setMenuBook] = useState<Book | null>(null);
+  const [seriesSheet, setSeriesSheet] = useState(false);
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const selectionMode = selection.size > 0;
+  const [refreshingMeta, setRefreshingMeta] = useState(false);
   const { books, seriesList, refresh } = useBooks(sort, query, seriesFilter);
   const { columns } = useWindowLayout();
+
+  // trash retention sweep: expired tombstones (and their files) go for good
+  useEffect(() => {
+    void purgeExpiredTrash({ fs: services.fs, paths: services.paths, books: services.books }).catch(() => {});
+    // services is the app-wide singleton
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const addBooks = async () => {
     const result = await DocumentPicker.getDocumentAsync({ multiple: true, type: [...SUPPORTED_MIME], copyToCacheDirectory: true });
@@ -69,12 +82,57 @@ export function LibraryScreen() {
     }
   };
 
+  // tombstone only: files stay on disk for the 30-day trash window
   const deleteBook = async (book: Book) => {
     await services.books.markDeleted(book.id, Date.now());
-    await services.fs.remove(services.paths.bookPath(book.id, book.format)).catch(() => {});
-    await services.fs.remove(services.paths.coverPath(book.id)).catch(() => {});
     setMenuBook(null);
     await refresh();
+  };
+
+  const toggleSelect = (id: string) =>
+    setSelection((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const bulkDelete = () => {
+    const ids = [...selection];
+    Alert.alert(t('library.deleteSelected', { count: ids.length }), undefined, [
+      { text: t('common.cancel') },
+      {
+        text: t('common.confirm'),
+        style: 'destructive',
+        onPress: () => void (async () => {
+          const now = Date.now();
+          for (const id of ids) await services.books.markDeleted(id, now);
+          setSelection(new Set());
+          await refresh();
+        })(),
+      },
+    ]);
+  };
+
+  const refreshMeta = async () => {
+    if (refreshingMeta || importing) return;
+    setRefreshingMeta(true);
+    setProgress({ done: 0, total: 0 });
+    try {
+      const deps = { fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine() };
+      const results = await refreshLibraryMetadata(deps, (p) => setProgress(p));
+      const enriched = await enrichSeriesFromOpenLibrary(deps, fetch, (p) => setProgress(p));
+      const updated = results.filter((r) => r.updated).length;
+      const series = enriched.filter((r) => r.updated).length;
+      const failed = results.filter((r) => !r.updated && r.detail).length + enriched.filter((r) => r.detail).length;
+      Alert.alert(t('library.refreshDone'), t('library.refreshSummary', { updated, series, failed }));
+      await refresh();
+    } catch (err) {
+      Alert.alert(t('library.refreshDone'), err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefreshingMeta(false);
+      setProgress(null);
+    }
   };
 
   return (
@@ -82,15 +140,45 @@ export function LibraryScreen() {
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
       <View style={styles.titleRow}>
         <Text style={[styles.title, { color: t0.foreground }]}>{t('library.title')}</Text>
-        <Pressable
-          onPress={() => router.push('/settings')}
-          accessibilityLabel={t('settings.title')}
-          accessibilityRole="button"
-          hitSlop={12}
-          style={[styles.iconButton, { borderColor: t0.border }]}
-        >
-          <Ionicons name="settings-outline" size={20} color={t0.foreground} />
-        </Pressable>
+        <View style={styles.titleActions}>
+          <Pressable
+            onPress={() => void refreshMeta()}
+            accessibilityLabel={t('library.refreshMeta')}
+            accessibilityRole="button"
+            hitSlop={12}
+            disabled={importing || refreshingMeta}
+            style={[styles.iconButton, { borderColor: t0.border, opacity: importing || refreshingMeta ? 0.4 : 1 }]}
+          >
+            <Ionicons name="sync-outline" size={20} color={t0.foreground} />
+          </Pressable>
+          <Pressable
+            onPress={() => setSeriesSheet(true)}
+            accessibilityLabel={t('library.series')}
+            accessibilityRole="button"
+            hitSlop={12}
+            style={[styles.iconButton, { borderColor: t0.border }]}
+          >
+            <Ionicons name="albums-outline" size={20} color={t0.foreground} />
+          </Pressable>
+          <Pressable
+            onPress={() => router.push('/trash')}
+            accessibilityLabel={t('trash.title')}
+            accessibilityRole="button"
+            hitSlop={12}
+            style={[styles.iconButton, { borderColor: t0.border }]}
+          >
+            <Ionicons name="trash-outline" size={20} color={t0.foreground} />
+          </Pressable>
+          <Pressable
+            onPress={() => router.push('/settings')}
+            accessibilityLabel={t('settings.title')}
+            accessibilityRole="button"
+            hitSlop={12}
+            style={[styles.iconButton, { borderColor: t0.border }]}
+          >
+            <Ionicons name="settings-outline" size={20} color={t0.foreground} />
+          </Pressable>
+        </View>
       </View>
       <View style={[styles.search, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
         <Ionicons name="search" size={16} color={t0.muted} />
@@ -138,14 +226,27 @@ export function LibraryScreen() {
           </ScrollView>
         </View>
       ) : null}
-      {importing && progress ? (
+      {selectionMode ? (
+        <View style={[styles.selectionBar, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
+          <Pressable onPress={() => setSelection(new Set())} accessibilityLabel={t('library.exitSelection')} hitSlop={8}>
+            <Ionicons name="close" size={22} color={t0.foreground} />
+          </Pressable>
+          <Text style={[styles.selectionCount, { color: t0.foreground }]}>{t('library.selected', { count: selection.size })}</Text>
+          <Pressable onPress={bulkDelete} hitSlop={8}>
+            <Text style={[styles.selectionDelete, { color: t0.danger }]}>{t('library.deleteSelected', { count: selection.size })}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {(importing || refreshingMeta) && progress ? (
         <View style={[styles.importBanner, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
           <Text style={[styles.importText, { color: t0.foreground }]}>
-            {t('library.importing', { done: progress.done, total: progress.total })}
+            {importing
+              ? t('library.importing', { done: progress.done, total: progress.total })
+              : t('library.refreshingMeta', { done: progress.done, total: progress.total })}
           </Text>
           <View style={styles.importTrack}>
-            <View style={{ flex: progress.done / progress.total, backgroundColor: t0.accent, borderRadius: 2 }} />
-            <View style={{ flex: 1 - progress.done / progress.total }} />
+            <View style={{ flex: progress.total > 0 ? progress.done / progress.total : 0, backgroundColor: t0.accent, borderRadius: 2 }} />
+            <View style={{ flex: progress.total > 0 ? 1 - progress.done / progress.total : 1 }} />
           </View>
         </View>
       ) : null}
@@ -175,8 +276,10 @@ export function LibraryScreen() {
             <BookGridItem
               book={item}
               coverUri={`${services.paths.coverPath(item.id)}`}
-              onPress={() => router.push(`/book/${item.id}`)}
-              onLongPress={() => setMenuBook(item)}
+              selectionMode={selectionMode}
+              selected={selection.has(item.id)}
+              onPress={() => (selectionMode ? toggleSelect(item.id) : router.push(`/book/${item.id}`))}
+              onLongPress={() => (selectionMode ? toggleSelect(item.id) : setMenuBook(item))}
             />
           )}
         />
@@ -190,6 +293,32 @@ export function LibraryScreen() {
       >
         {importing ? <ActivityIndicator color={t0.onAccent} /> : <Ionicons name="add" size={28} color={t0.onAccent} />}
       </Pressable>
+
+      <Modal visible={seriesSheet} transparent animationType="fade" onRequestClose={() => setSeriesSheet(false)}>
+        <Pressable style={styles.sheetBackdrop} onPress={() => setSeriesSheet(false)}>
+          <View style={[styles.sheet, { backgroundColor: t0.chrome, paddingBottom: 16 + insets.bottom }]} testID="series-sheet">
+            <View style={styles.sheetHandle}>
+              <View style={[styles.sheetHandleBar, { backgroundColor: t0.border }]} />
+            </View>
+            <Text style={[styles.sheetTitle, { color: t0.foreground }]}>{t('library.series')}</Text>
+            {seriesList.length === 0 ? (
+              <Text style={[styles.seriesEmpty, { color: t0.muted }]}>{t('library.seriesEmpty')}</Text>
+            ) : (
+              seriesList.map((s) => (
+                <Pressable
+                  key={s.name}
+                  style={styles.sheetRow}
+                  onPress={() => { setSeriesFilter(s.name); setSeriesSheet(false); }}
+                >
+                  <Ionicons name="albums-outline" size={20} color={t0.foreground} />
+                  <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>{s.name}</Text>
+                  <Text style={[styles.seriesCount, { color: t0.muted }]}>{s.count}</Text>
+                </Pressable>
+              ))
+            )}
+          </View>
+        </Pressable>
+      </Modal>
 
       <Modal visible={menuBook !== null} transparent animationType="fade" onRequestClose={() => setMenuBook(null)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setMenuBook(null)}>
@@ -205,6 +334,10 @@ export function LibraryScreen() {
             <Pressable style={styles.sheetRow} onPress={() => { Alert.alert(t('library.menu.info'), `${menuBook?.title ?? ''}\n${menuBook?.author ?? ''} · ${menuBook ? formatBytes(menuBook.fileSize, lang) : ''}`); setMenuBook(null); }}>
               <Ionicons name="information-circle-outline" size={20} color={t0.foreground} />
               <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.info')}</Text>
+            </Pressable>
+            <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); setSelection(new Set([b.id])); }}>
+              <Ionicons name="checkbox-outline" size={20} color={t0.foreground} />
+              <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.select')}</Text>
             </Pressable>
             <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); Alert.alert(t('common.delete'), b.title, [{ text: t('common.cancel') }, { text: t('common.confirm'), style: 'destructive', onPress: () => void deleteBook(b) }]); }}>
               <Ionicons name="trash-outline" size={20} color={t0.danger} />
@@ -222,6 +355,7 @@ export function LibraryScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, paddingHorizontal: 16 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, marginBottom: 12 },
+  titleActions: { flexDirection: 'row', gap: 8 },
   title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.5 },
   iconButton: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 42, marginBottom: 10 },
@@ -237,6 +371,12 @@ const styles = StyleSheet.create({
   importTrack: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: '#88888833', flexDirection: 'row' },
   sortChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, borderWidth: 1 },
   sortChipText: { fontSize: 13, fontWeight: '600' },
+  selectionBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 44, marginBottom: 10,
+  },
+  selectionCount: { flex: 1, fontSize: 14, fontWeight: '700' },
+  selectionDelete: { fontSize: 14, fontWeight: '700' },
   grid: { paddingBottom: 96, gap: 4 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingBottom: 60 },
   emptyGlyphWrap: { width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
@@ -252,4 +392,7 @@ const styles = StyleSheet.create({
   sheetTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
   sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14 },
   sheetRowText: { fontSize: 15 },
+  sheetRowMain: { flex: 1 },
+  seriesEmpty: { fontSize: 14, paddingVertical: 12 },
+  seriesCount: { fontSize: 14, fontWeight: '600' },
 });

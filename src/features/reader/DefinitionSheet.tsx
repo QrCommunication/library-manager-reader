@@ -38,7 +38,9 @@ export function DefinitionSheet({ word, lang, initialMode, onClose }: {
           const found = await lookup.define(word, lang);
           if (!cancelled) setSenses(found);
         } else {
-          const translated = await lookup.translate(word, lang ?? 'en', target);
+          // 'auto' lets the server detect the source language when the book
+          // carries none, instead of silently assuming English
+          const translated = await lookup.translate(word, lang ?? 'auto', target);
           if (!cancelled) setTranslation(translated);
         }
       } catch (e) {

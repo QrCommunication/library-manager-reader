@@ -73,6 +73,45 @@ export function createBooksRepo(db: DbDriver, newId: () => string) {
       );
       return rows.map((r) => ({ name: r.series, count: r.n }));
     },
+    async findDuplicate(key: { identifier: string | null; title: string | null; author: string | null }): Promise<Book | null> {
+      // identifier match wins; fallback compares trimmed/lowercased title AND
+      // author (a missing incoming author must not match a book that has one)
+      const row = await db.get<BookRow>(
+        `SELECT * FROM books WHERE deleted_at IS NULL AND (
+           (? IS NOT NULL AND drm_identifier IS NOT NULL AND LOWER(TRIM(drm_identifier)) = LOWER(TRIM(?)))
+           OR (LOWER(TRIM(title)) = LOWER(TRIM(?)) AND LOWER(COALESCE(author,'')) = LOWER(COALESCE(?,'')))
+         ) LIMIT 1`,
+        [key.identifier, key.identifier, key.title, key.author ?? ''],
+      );
+      return row ? rowToBook(row) : null;
+    },
+    async listDeleted(): Promise<Book[]> {
+      const rows = await db.all<BookRow>('SELECT * FROM books WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC');
+      return rows.map(rowToBook);
+    },
+    async restoreBook(id: string, at: number = Date.now()): Promise<void> {
+      await db.run('UPDATE books SET deleted_at = NULL, updated_at = ? WHERE id = ?', [at, id]);
+    },
+    async purgeBook(id: string): Promise<void> {
+      await db.run('DELETE FROM books WHERE id = ?', [id]);
+    },
+    async updateMetadata(id: string, patch: {
+      title?: string; author?: string | null; language?: string | null; publisher?: string | null;
+      series?: string | null; seriesIndex?: number | null; drmIdentifier?: string | null;
+    }): Promise<void> {
+      const COLS = {
+        title: 'title', author: 'author', language: 'language', publisher: 'publisher',
+        series: 'series', seriesIndex: 'series_index', drmIdentifier: 'drm_identifier',
+      } as const;
+      const sets = ['updated_at = ?'];
+      const params: unknown[] = [Date.now()];
+      for (const [k, col] of Object.entries(COLS)) {
+        const v = (patch as Record<string, unknown>)[k];
+        if (v !== undefined) { sets.push(`${col} = ?`); params.push(v); }
+      }
+      params.push(id);
+      await db.run(`UPDATE books SET ${sets.join(', ')} WHERE id = ?`, params);
+    },
     async markDeleted(id: string, at: number): Promise<void> {
       await db.run('UPDATE books SET deleted_at = ?, updated_at = ? WHERE id = ?', [at, at, id]);
     },

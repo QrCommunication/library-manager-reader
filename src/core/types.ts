@@ -121,6 +121,8 @@ export interface UiPrefs {
 export const DEFAULT_UI_PREFS: UiPrefs = {
   language: 'auto',
   defaultTheme: 'day',
-  libreTranslateUrl: 'https://libretranslate.com',
-  libreTranslateApiKey: '',
+  // shipped translation endpoint: the shared community server, key included —
+  // translation works out of the box; users can still override both in Réglages
+  libreTranslateUrl: 'https://translate.rlconseil.net',
+  libreTranslateApiKey: '73d6bbf4-eaba-4bbf-ad82-d58f9ccba23d',
 };
