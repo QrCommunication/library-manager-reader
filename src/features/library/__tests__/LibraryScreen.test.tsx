@@ -19,6 +19,16 @@ jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
   (buttons?.find((b) => b.text === 'Confirmer') as { onPress?: () => void } | undefined)?.onPress?.();
 });
 
+jest.mock('expo-document-picker', () => ({
+  getDocumentAsync: jest.fn(),
+}));
+const mockPicker = require('expo-document-picker').getDocumentAsync as jest.Mock;
+
+jest.mock('../../../core/reader/headlessEngine', () => ({
+  getHeadlessEngine: jest.fn(),
+}));
+const mockGetEngine = require('../../../core/reader/headlessEngine').getHeadlessEngine as jest.Mock;
+
 const makeServices = async () => {
   const { DatabaseSync } = require('node:sqlite');
   const { createNodeSqliteDriver } = require('../../../db/nodeSqliteDriver');
@@ -55,5 +65,26 @@ describe('LibraryScreen', () => {
     fireEvent(await screen.findByText('Dune'), 'longPress');
     fireEvent.press(await screen.findByText('Supprimer'));
     await waitFor(async () => expect(screen.queryByText('Dune')).toBeNull());
+  });
+
+  it('surfaces a pre-import crash (headless engine) in the results sheet with its detail', async () => {
+    const services = await makeServices();
+    mockPicker.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///x/Book.epub' }] });
+    mockGetEngine.mockImplementation(() => { throw new Error('headless engine not initialised'); });
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent.press(await screen.findByText('Ajouter des livres'));
+    expect(await screen.findByText('Import terminé')).toBeOnTheScreen();
+    expect(await screen.findByText(/headless engine not initialised/)).toBeOnTheScreen();
+  });
+
+  it('shows the underlying io error detail next to the failed file', async () => {
+    const services = await makeServices();
+    services.fs.copy = async () => { throw new Error('EIO: copy failed'); };
+    mockPicker.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///x/Book.epub' }] });
+    mockGetEngine.mockReturnValue({ extract: jest.fn() });
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent.press(await screen.findByText('Ajouter des livres'));
+    expect(await screen.findByText('Import terminé')).toBeOnTheScreen();
+    expect(await screen.findByText(/EIO: copy failed/)).toBeOnTheScreen();
   });
 });

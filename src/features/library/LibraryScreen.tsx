@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useServices } from '../../core/services';
 import { useBooks, type SortKey } from './useBooks';
 import { runImport } from '../../core/import/importService';
@@ -22,6 +24,10 @@ export function LibraryScreen() {
   const { t, i18n } = useTranslation();
   const services = useServices();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  // app chrome follows the system light/dark; the reader surface has its own theme
+  const dark = useColorScheme() === 'dark';
+  const t0 = themeTokens(dark ? 'night' : 'day');
   // same active-language resolution as SettingsScreen (handles 'auto')
   const lang = i18n.language === 'fr' ? 'fr' : 'en';
   const [sort, setSort] = useState<SortKey>('recent');
@@ -43,7 +49,15 @@ export function LibraryScreen() {
       });
       setOutcomes(results);
     } catch (err) {
+      // failures thrown before/outside runImport (uninitialised headless engine,
+      // picker oddities) would otherwise be invisible on a device build
       console.warn('[library] import failed', err);
+      setOutcomes([{
+        uri: result.assets[0]?.uri ?? 'import',
+        ok: false,
+        reason: 'io_error',
+        detail: err instanceof Error ? err.message : String(err),
+      }]);
     } finally {
       setImporting(false);
       await refresh();
@@ -59,41 +73,61 @@ export function LibraryScreen() {
   };
 
   return (
-    <View style={[styles.root, { backgroundColor: themeTokens('day').background }]}>
+    <View style={[styles.root, { backgroundColor: t0.background, paddingTop: insets.top }]}>
+      <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
       <View style={styles.titleRow}>
-        <Text style={styles.title}>{t('library.title')}</Text>
+        <Text style={[styles.title, { color: t0.foreground }]}>{t('library.title')}</Text>
         <Pressable
           onPress={() => router.push('/settings')}
           accessibilityLabel={t('settings.title')}
           accessibilityRole="button"
-          hitSlop={8}
+          hitSlop={12}
+          style={[styles.iconButton, { borderColor: t0.border }]}
         >
-          <Text style={styles.settingsGlyph}>{'⚙'}</Text>
+          <Ionicons name="settings-outline" size={20} color={t0.foreground} />
         </Pressable>
       </View>
-      <TextInput
-        style={styles.search}
-        placeholder={t('library.search')}
-        value={query}
-        onChangeText={setQuery}
-        autoCorrect={false}
-      />
+      <View style={[styles.search, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
+        <Ionicons name="search" size={16} color={t0.muted} />
+        <TextInput
+          style={[styles.searchInput, { color: t0.foreground }]}
+          placeholder={t('library.search')}
+          placeholderTextColor={t0.muted}
+          value={query}
+          onChangeText={setQuery}
+          autoCorrect={false}
+        />
+      </View>
       <View style={styles.sortRow}>
-        {SORTS.map((s) => (
-          <Pressable key={s} onPress={() => setSort(s)} style={[styles.sortChip, sort === s && styles.sortChipOn]}>
-            <Text>{t(`library.sort.${s}`)}</Text>
+        {SORTS.map((srt) => (
+          <Pressable
+            key={srt}
+            onPress={() => setSort(srt)}
+            style={[styles.sortChip, { borderColor: t0.border }, sort === srt && { backgroundColor: t0.accent, borderColor: t0.accent }]}
+          >
+            <Text style={[styles.sortChipText, { color: sort === srt ? t0.onAccent : t0.foreground }]}>
+              {t(`library.sort.${srt}`)}
+            </Text>
           </Pressable>
         ))}
       </View>
       {books.length === 0 ? (
         <View style={styles.empty}>
-          <Text onLongPress={__DEV__ ? () => { void seedIfEmpty(services).catch((e) => console.warn('[seed] failed', e)); } : undefined}>
+          <View style={[styles.emptyGlyphWrap, { backgroundColor: t0.chrome }]}>
+            <Ionicons name="library-outline" size={40} color={t0.muted} />
+          </View>
+          <Text style={[styles.emptyTitle, { color: t0.foreground }]} onLongPress={__DEV__ ? () => { void seedIfEmpty(services).catch((e) => console.warn('[seed] failed', e)); } : undefined}>
             {t('library.empty')}
           </Text>
+          <Text style={[styles.emptyHint, { color: t0.muted }]}>{t('library.emptyHint')}</Text>
+          <Pressable style={[styles.emptyButton, { backgroundColor: t0.accent }]} onPress={addBooks} disabled={importing}>
+            <Text style={[styles.emptyButtonText, { color: t0.onAccent }]}>{t('library.add')}</Text>
+          </Pressable>
         </View>
       ) : (
         <FlatList
           data={books}
+          contentContainerStyle={styles.grid}
           // key remounts the list when the column count changes (fold/rotate):
           // FlatList forbids numColumns mutations for a mounted instance
           key={`grid-${columns}`}
@@ -109,21 +143,34 @@ export function LibraryScreen() {
           )}
         />
       )}
-      <Pressable style={styles.fab} onPress={addBooks} disabled={importing}>
-        {importing ? <ActivityIndicator /> : <Text style={styles.fabText}>{t('library.add')}</Text>}
+      <Pressable
+        style={[styles.fab, { backgroundColor: t0.accent, bottom: 24 + insets.bottom }]}
+        onPress={addBooks}
+        disabled={importing}
+        accessibilityLabel={t('library.add')}
+        accessibilityRole="button"
+      >
+        {importing ? <ActivityIndicator color={t0.onAccent} /> : <Ionicons name="add" size={28} color={t0.onAccent} />}
       </Pressable>
 
       <Modal visible={menuBook !== null} transparent animationType="fade" onRequestClose={() => setMenuBook(null)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setMenuBook(null)}>
-          <View style={styles.sheet}>
-            <Pressable onPress={() => { const b = menuBook!; setMenuBook(null); router.push(`/book/${b.id}`); }}>
-              <Text>{t('library.menu.open')}</Text>
+          <View style={[styles.sheet, { backgroundColor: t0.chrome, paddingBottom: 16 + insets.bottom }]}>
+            <View style={styles.sheetHandle}>
+              <View style={[styles.sheetHandleBar, { backgroundColor: t0.border }]} />
+            </View>
+            <Text numberOfLines={1} style={[styles.sheetTitle, { color: t0.foreground }]}>{menuBook?.title}</Text>
+            <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); router.push(`/book/${b.id}`); }}>
+              <Ionicons name="book-outline" size={20} color={t0.foreground} />
+              <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.open')}</Text>
             </Pressable>
-            <Pressable onPress={() => { Alert.alert(t('library.menu.info'), `${menuBook?.title ?? ''}\n${menuBook?.author ?? ''} · ${menuBook ? formatBytes(menuBook.fileSize, lang) : ''}`); setMenuBook(null); }}>
-              <Text>{t('library.menu.info')}</Text>
+            <Pressable style={styles.sheetRow} onPress={() => { Alert.alert(t('library.menu.info'), `${menuBook?.title ?? ''}\n${menuBook?.author ?? ''} · ${menuBook ? formatBytes(menuBook.fileSize, lang) : ''}`); setMenuBook(null); }}>
+              <Ionicons name="information-circle-outline" size={20} color={t0.foreground} />
+              <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.info')}</Text>
             </Pressable>
-            <Pressable onPress={() => { const b = menuBook!; setMenuBook(null); Alert.alert(t('common.delete'), b.title, [{ text: t('common.cancel') }, { text: t('common.confirm'), style: 'destructive', onPress: () => void deleteBook(b) }]); }}>
-              <Text style={{ color: '#C0392B' }}>{t('library.menu.delete')}</Text>
+            <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); Alert.alert(t('common.delete'), b.title, [{ text: t('common.cancel') }, { text: t('common.confirm'), style: 'destructive', onPress: () => void deleteBook(b) }]); }}>
+              <Ionicons name="trash-outline" size={20} color={t0.danger} />
+              <Text style={[styles.sheetRowText, { color: t0.danger }]}>{t('library.menu.delete')}</Text>
             </Pressable>
           </View>
         </Pressable>
@@ -135,17 +182,28 @@ export function LibraryScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, paddingTop: 48, paddingHorizontal: 12 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  title: { fontSize: 28, fontWeight: '700' },
-  settingsGlyph: { fontSize: 22, lineHeight: 28 },
-  search: { borderWidth: 1, borderColor: '#CCC', borderRadius: 8, paddingHorizontal: 10, height: 40, marginBottom: 8 },
-  sortRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
-  sortChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: '#CCC' },
-  sortChipOn: { backgroundColor: '#DCE7FB', borderColor: '#2D6CDF' },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  fab: { position: 'absolute', bottom: 24, right: 24, backgroundColor: '#2D6CDF', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 12 },
-  fabText: { color: '#FFF', fontWeight: '600' },
+  root: { flex: 1, paddingHorizontal: 16 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, marginBottom: 12 },
+  title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.5 },
+  iconButton: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 42, marginBottom: 10 },
+  searchInput: { flex: 1, fontSize: 15, paddingVertical: 0 },
+  sortRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+  sortChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, borderWidth: 1 },
+  sortChipText: { fontSize: 13, fontWeight: '600' },
+  grid: { paddingBottom: 96, gap: 4 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingBottom: 60 },
+  emptyGlyphWrap: { width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  emptyTitle: { fontSize: 18, fontWeight: '700' },
+  emptyHint: { fontSize: 14, textAlign: 'center', paddingHorizontal: 40 },
+  emptyButton: { marginTop: 12, borderRadius: 24, paddingHorizontal: 24, paddingVertical: 12 },
+  emptyButtonText: { fontSize: 15, fontWeight: '700' },
+  fab: { position: 'absolute', right: 24, width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
   sheetBackdrop: { flex: 1, backgroundColor: '#00000055', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#FFF', padding: 20, gap: 16, borderTopLeftRadius: 16, borderTopRightRadius: 16 },
+  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: 20, paddingTop: 8, gap: 4 },
+  sheetHandle: { alignItems: 'center', paddingVertical: 8 },
+  sheetHandleBar: { width: 36, height: 4, borderRadius: 2 },
+  sheetTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14 },
+  sheetRowText: { fontSize: 15 },
 });

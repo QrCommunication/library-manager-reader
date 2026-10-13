@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useServices } from '../../core/services';
 import type { Bookmark } from '../../core/types';
+import { useReaderTheme } from '../../theme/context';
 
 // Structural slice of the reader bridge needed here (ReaderBridge satisfies it).
 export interface BookmarkCaptureBridge {
@@ -15,6 +16,7 @@ export function BookmarksPanel({ bookId, bridge, onNavigate }: {
   onNavigate(target: string): void;
 }) {
   const { t } = useTranslation();
+  const th = useReaderTheme();
   const { bookmarks } = useServices();
   const [items, setItems] = useState<Bookmark[]>([]);
   const [adding, setAdding] = useState(false);
@@ -56,22 +58,22 @@ export function BookmarksPanel({ bookId, bridge, onNavigate }: {
   return (
     <View style={styles.root}>
       <Pressable
-        style={[styles.addButton, adding && styles.buttonDisabled]}
+        style={[styles.addButton, { backgroundColor: th.accent }, adding && styles.buttonDisabled]}
         disabled={adding}
         onPress={() => void add()}
       >
-        <Text style={styles.addText}>{t('reader.bookmark.add')}</Text>
+        <Text style={[styles.addText, { color: th.onAccent }]}>{t('reader.bookmark.add')}</Text>
       </Pressable>
       <ScrollView>
         {items.map((bm) => (
-          <View key={bm.id} style={styles.row}>
+          <View key={bm.id} style={[styles.row, { borderBottomColor: th.border }]}>
             <Pressable style={styles.rowMain} onPress={() => onNavigate(bm.cfi)}>
-              <Text style={styles.preview} numberOfLines={2}>
+              <Text style={[styles.preview, { color: th.foreground }]} numberOfLines={2}>
                 {bm.previewText ?? bm.cfi}
               </Text>
             </Pressable>
             <Pressable hitSlop={8} onPress={() => void remove(bm.id)} accessibilityLabel={t('reader.bookmark.remove')}>
-              <Text style={styles.remove}>✕</Text>
+              <Text style={[styles.remove, { color: th.danger }]}>✕</Text>
             </Pressable>
           </View>
         ))}
@@ -83,13 +85,12 @@ export function BookmarksPanel({ bookId, bridge, onNavigate }: {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   addButton: {
-    margin: 12, paddingVertical: 10, borderRadius: 8,
-    backgroundColor: '#2D6CDF', alignItems: 'center',
+    margin: 12, paddingVertical: 10, borderRadius: 8, alignItems: 'center',
   },
   buttonDisabled: { opacity: 0.5 },
-  addText: { color: '#FFFFFF', fontWeight: '600' },
-  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#00000022' },
+  addText: { fontWeight: '600' },
+  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   rowMain: { flex: 1, paddingVertical: 12, paddingRight: 8 },
   preview: { fontSize: 14 },
-  remove: { fontSize: 16, color: '#C0392B', paddingHorizontal: 6 },
+  remove: { fontSize: 16, paddingHorizontal: 6 },
 });
