@@ -25,28 +25,36 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
   const [panel, setPanel] = useState<PanelName | null>(null);
   const closePanel = () => setPanel(null);
 
-  if (state === 'loading') {
+  // Non-ready layouts keep the engine WebView mounted whenever a bridge exists
+  // (loading AND error states): the engine's engineReady announcement can only
+  // arrive through the WebView's onMessage, so unmounting the WebView while
+  // waiting for it deadlocks the ready-gate on a real device.
+  if (state !== 'ready' || !bridge) {
+    const pending = bridge as ReaderBridge | null;
     return (
-      <View style={styles.center}>
-        <ActivityIndicator />
-        <Text>{t('reader.loading')}</Text>
-      </View>
-    );
-  }
-
-  if (state === 'error' || !bridge) {
-    return (
-      <View style={styles.center}>
-        <Text style={styles.errorText}>{errorKind === 'missing' ? t('reader.error.missing') : t('reader.error.open')}</Text>
-        <Pressable style={styles.button} onPress={retry}>
-          <Text>{t('common.retry')}</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.button, styles.deleteButton]}
-          onPress={() => { void services.books.markDeleted(bookId, Date.now()).then(() => router.back()); }}
-        >
-          <Text>{t('common.delete')}</Text>
-        </Pressable>
+      <View style={styles.root}>
+        {pending ? <EngineWebView bridge={pending} onFatal={retry} onReload={retry} /> : null}
+        <View style={styles.center}>
+          {state === 'error' ? (
+            <>
+              <Text style={styles.errorText}>{errorKind === 'missing' ? t('reader.error.missing') : t('reader.error.open')}</Text>
+              <Pressable style={styles.button} onPress={retry}>
+                <Text>{t('common.retry')}</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.button, styles.deleteButton]}
+                onPress={() => { void services.books.markDeleted(bookId, Date.now()).then(() => router.back()); }}
+              >
+                <Text>{t('common.delete')}</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator />
+              <Text>{t('reader.loading')}</Text>
+            </>
+          )}
+        </View>
       </View>
     );
   }

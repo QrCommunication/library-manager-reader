@@ -80,7 +80,9 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
 
   // reset to 'loading' whenever the session is re-triggered (retry / book change),
   // mirroring the effect deps below; done during render per the React
-  // "adjusting state when a key changes" pattern instead of the effect body
+  // "adjusting state when a key changes" pattern instead of the effect body.
+  // Nulling the bridge unmounts EngineWebView so a retry boots a FRESH engine
+  // page — a page that already sent engineReady can never ready the new bridge.
   const [sessionKey, setSessionKey] = useState({ bookId, nonce, defaultDeps, depsOverride });
   if (
     sessionKey.bookId !== bookId ||
@@ -90,6 +92,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
   ) {
     setSessionKey({ bookId, nonce, defaultDeps, depsOverride });
     setState('loading');
+    setBridge(null);
   }
 
   useEffect(() => {
