@@ -51,6 +51,7 @@ export function TtsBar({ bridge, speech, rate, onRateChange, bookLang, currentCf
   const rateRef = useRef(rate);
   const statusRef = useRef<Status>('idle');
   const navigationRef = useRef(navigationKey);
+  const bridgeRef = useRef(bridge);
   const guardRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => { followRef.current = follow; }, [follow]);
   useEffect(() => { rateRef.current = rate; }, [rate]);
@@ -97,8 +98,20 @@ export function TtsBar({ bridge, speech, rate, onRateChange, bookLang, currentCf
     });
   }, [bridge, speech, bookLang, endStream, disarm]);
 
-  // Leaving the screen (or a session retry replacing the bridge) stops playback.
-  useEffect(() => () => { speech.stop(); bridge.ttsStop(); }, [bridge, speech]);
+  // A session retry replaces the bridge — the old stream is gone (its stop ran
+  // in the cleanup below) but the bar would keep a stale playing/paused label.
+  // Reset the transient state (guard + status) on bridge identity change.
+  useEffect(() => {
+    if (bridgeRef.current === bridge) return;
+    bridgeRef.current = bridge;
+    disarm();
+    statusRef.current = 'idle';
+    setStatus('idle');
+  }, [bridge, disarm]);
+
+  // Leaving the screen (or a session retry replacing the bridge) stops playback;
+  // disarm the guard too so its timer can't fire post-teardown.
+  useEffect(() => () => { disarm(); speech.stop(); bridge.ttsStop(); }, [bridge, speech, disarm]);
 
   return (
     <View style={styles.root}>

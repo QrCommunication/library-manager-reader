@@ -181,4 +181,35 @@ describe('TtsBar', () => {
     expect(sp.stop).toHaveBeenCalled();
     expect(bridge.ttsStop).toHaveBeenCalled();
   });
+
+  // Review: unmount must DISARM the pending dead-stream guard, not just stop —
+  // otherwise the timer fires post-unmount and re-calls stop/ttsStop on a
+  // torn-down screen (idempotent today, still wrong).
+  it('disarms the dead-stream guard on unmount (no stop calls after unmount)', async () => {
+    const { bridge, sp, view } = await setup();
+    await fireEvent.press(screen.getByLabelText('Lire à voix haute'));
+    await act(async () => { bridge.emit({ text: 'Une.', cfi: 'c1' }); });
+    jest.useFakeTimers();
+    try {
+      await act(async () => { onDoneOf(sp)(); }); // arms the guard
+      await view.unmount();
+      sp.stop.mockClear();
+      bridge.ttsStop.mockClear();
+      await act(async () => { jest.advanceTimersByTime(1000); }); // guard window expires, component gone
+      expect(sp.stop).not.toHaveBeenCalled();
+      expect(bridge.ttsStop).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // Review: a session retry swaps the bridge while the bar may still show
+  // playing — the transient state must reset to idle on bridge identity change.
+  it('resets to idle when the bridge instance is replaced (session retry)', async () => {
+    const { ui, view } = await setup();
+    await fireEvent.press(screen.getByLabelText('Lire à voix haute'));
+    expect(screen.getByLabelText('Pause')).toBeOnTheScreen();
+    await view.rerender(ui({ bridge: makeBridge() as unknown as TtsBridge }));
+    expect(screen.getByLabelText('Lire à voix haute')).toBeOnTheScreen();
+  });
 });
