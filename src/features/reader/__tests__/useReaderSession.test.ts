@@ -60,7 +60,7 @@ describe('useReaderSession', () => {
         progressCb = cb;
         return () => {};
       },
-    });
+    } as typeof gatedBridge);
     const { result } = await renderHook(() => useReaderSession('b1', deps as never));
     await waitFor(() => expect(progressCb).not.toBeNull());
     // foliate emits an early relocate (fraction≈0) right after load, while the
