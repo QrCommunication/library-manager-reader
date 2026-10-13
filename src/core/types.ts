@@ -95,6 +95,13 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
 export interface UiPrefs {
   language: LanguagePref;
   defaultTheme: ThemeName;
+  libreTranslateUrl: string;
+  libreTranslateApiKey: string;
 }
 
-export const DEFAULT_UI_PREFS: UiPrefs = { language: 'auto', defaultTheme: 'day' };
+export const DEFAULT_UI_PREFS: UiPrefs = {
+  language: 'auto',
+  defaultTheme: 'day',
+  libreTranslateUrl: 'https://libretranslate.com',
+  libreTranslateApiKey: '',
+};

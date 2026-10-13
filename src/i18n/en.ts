@@ -58,6 +58,8 @@ export const en = {
     },
     storage: 'Storage',
     about: 'About',
+    libreTranslateUrl: 'LibreTranslate URL',
+    libreTranslateApiKey: 'LibreTranslate API key',
   },
   import: {
     failed: {
