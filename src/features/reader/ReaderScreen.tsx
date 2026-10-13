@@ -64,11 +64,14 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
   // row).
   useEffect(() => {
     if (!bridge) return;
+    // the engine reports selection coords relative to the WebView, which sits
+    // below the status bar — the popover is positioned in root coords
     return bridge.onSelectionChanged((s) => {
-      setSelection(s.text && s.rect ? { text: s.text, rect: s.rect, cfi: s.cfi, lang: s.lang } : null);
+      if (s.text && s.rect) setSelection({ text: s.text, rect: { ...s.rect, y: s.rect.y + insets.top }, cfi: s.cfi, lang: s.lang });
+      else setSelection(null);
       setHighlightMode(false);
     });
-  }, [bridge]);
+  }, [bridge, insets.top]);
 
   // Chrome toggling comes from the engine document (middle-third tap): the RN
   // tap zones were removed because they blocked native text selection.
@@ -131,7 +134,7 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
       <ReaderThemeProvider value={rt}>
         <View style={[styles.root, { backgroundColor: rt.background }]}>
           <StatusBar barStyle={resolvedTheme === 'night' ? 'light-content' : 'dark-content'} />
-          {pending ? <EngineWebView bridge={pending} onFatal={retry} onReload={retry} /> : null}
+          {pending ? <EngineWebView bridge={pending} onFatal={retry} onReload={retry} topInset={insets.top} /> : null}
           <View style={styles.center}>
             {state === 'error' ? (
               <>
@@ -165,7 +168,7 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
     <ReaderThemeProvider value={rt}>
       <View style={[styles.root, { backgroundColor: rt.background }]}>
         <StatusBar barStyle={resolvedTheme === 'night' ? 'light-content' : 'dark-content'} />
-        <EngineWebView bridge={reader} onFatal={retry} onReload={retry} />
+        <EngineWebView bridge={reader} onFatal={retry} onReload={retry} topInset={insets.top} />
         {settings.brightness > 0 ? (
           // brightness dimming: full-screen black veil ABOVE the engine content,
           // BELOW the chrome — never intercepts touches (page taps are handled
