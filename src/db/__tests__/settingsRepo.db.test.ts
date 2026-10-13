@@ -36,6 +36,17 @@ describe('settingsRepo', () => {
     expect(prefs.libreTranslateApiKey).toBe('');
   });
 
+  it('merges new ttsRate/brightness defaults into a stored pre-tts readerSettings row', async () => {
+    const db = createNodeSqliteDriver(new DatabaseSync(':memory:'));
+    await migrate(db);
+    await db.run('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)', ['readerSettings', JSON.stringify({ fontFamily: 'serif', fontSize: 18 }), 1]);
+    const repo = createSettingsRepo(db);
+    const settings = await repo.getReaderSettings();
+    expect(settings.ttsRate).toBe(1);
+    expect(settings.brightness).toBe(0);
+    expect(settings.fontSize).toBe(18);
+  });
+
   it('returns full defaults when a stored row is corrupted instead of crashing', async () => {
     const db = createNodeSqliteDriver(new DatabaseSync(':memory:'));
     await migrate(db);

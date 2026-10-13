@@ -12,7 +12,7 @@ describe('TypographyPanel', () => {
     const onSettingsChange = jest.fn();
     await render(
       <TypographyPanel
-        settings={{ fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day' }}
+        settings={{ fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0 }}
         onSettingsChange={onSettingsChange}
       />,
     );

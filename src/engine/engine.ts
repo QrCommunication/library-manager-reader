@@ -220,7 +220,7 @@ view.addEventListener('relocate', () => {
 });
 
 let settings: ReaderSettings = {
-  fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day',
+  fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0,
 };
 
 let assembler: ReturnType<typeof createChunkAssembler> | null = null;

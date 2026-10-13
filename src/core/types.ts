@@ -82,6 +82,8 @@ export interface ReaderSettings {
   lineHeight: number; // 1.2–2.2
   margin: number; // px, 0–64
   theme: ThemeName;
+  ttsRate: number; // 0.5–2.0
+  brightness: number; // 0–70 (% d'assombrissement)
 }
 
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
@@ -90,6 +92,8 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   lineHeight: 1.6,
   margin: 20,
   theme: 'day',
+  ttsRate: 1,
+  brightness: 0,
 };
 
 export interface UiPrefs {
