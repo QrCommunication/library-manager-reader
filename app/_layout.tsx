@@ -1,30 +1,31 @@
 import { Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { initI18n } from '../src/i18n';
-import { createExpoDriver } from '../src/db/expoDriver';
-import { migrate } from '../src/db/migrate';
-import type { DbDriver } from '../src/db/driver';
-import { createServices, ServicesProvider, type AppServices } from '../src/core/services';
-import { createExpoFsAdapter, documentRoot } from '../src/core/storage/expoFsAdapter';
-import { uuidV7 } from '../src/core/uuid';
-
-let db: DbDriver | null = null;
-let services: AppServices | null = null;
+import { createAppServices } from '../src/core/startup';
+import { ServicesProvider, type AppServices } from '../src/core/services';
+import { setServices as setUiPrefsServices, useUiPrefsStore } from '../src/features/settings/uiPrefsStore';
+import { setServices as setReaderSettingsServices, useReaderSettingsStore } from '../src/features/settings/readerSettingsStore';
+import { initHeadlessEngine } from '../src/core/reader/headlessEngine';
+import { HeadlessEngineView } from '../src/features/reader/HeadlessEngineView';
 
 export default function RootLayout() {
-  const [ready, setReady] = useState(false);
+  const [services, setServicesState] = useState<AppServices | null>(null);
   useEffect(() => {
     void (async () => {
-      db = createExpoDriver();
-      await migrate(db);
-      services = createServices({ db, fs: createExpoFsAdapter(), root: documentRoot(), newId: uuidV7 });
-      await initI18n('auto');
-      setReady(true);
+      const s = await createAppServices();
+      setUiPrefsServices(s); // closes the Task 10 deferred wiring
+      setReaderSettingsServices(s); // both stores share the services singleton
+      initHeadlessEngine(s.fs);
+      await useUiPrefsStore.getState().hydrate();
+      await useReaderSettingsStore.getState().hydrate();
+      await initI18n(useUiPrefsStore.getState().prefs.language);
+      setServicesState(s);
     })();
   }, []);
-  if (!ready || !services) return null;
+  if (!services) return null;
   return (
     <ServicesProvider value={services}>
+      <HeadlessEngineView />
       <Stack />
     </ServicesProvider>
   );

@@ -11,7 +11,8 @@ import type { Book } from '../../core/types';
 import { themeTokens } from '../../theme/tokens';
 import { BookGridItem } from './BookGridItem';
 import { ImportResultsSheet, type ImportOutcome } from './ImportResultsSheet';
-import { createHeadlessExtractor } from '../../core/reader/metadataPort';
+import { getHeadlessEngine } from '../../core/reader/headlessEngine';
+import { seedIfEmpty } from '../../dev/seed';
 
 const SORTS: SortKey[] = ['recent', 'added', 'title'];
 
@@ -31,12 +32,8 @@ export function LibraryScreen() {
     if (result.canceled) return;
     setImporting(true);
     try {
-      const extractor = createHeadlessExtractor(
-        () => {}, // wired to the headless EngineWebView instance in Task 13 integration
-        services.fs,
-      );
       const results = await runImport(result.assets.map((a) => a.uri), {
-        fs: services.fs, paths: services.paths, books: services.books, extractor,
+        fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine(),
       });
       setOutcomes(results);
     } catch (err) {
@@ -84,8 +81,9 @@ export function LibraryScreen() {
       </View>
       {books.length === 0 ? (
         <View style={styles.empty}>
-          <Text>{t('library.empty')}</Text>
-          {__DEV__ ? <Text onPress={() => { /* __DEV__ seed hook added in Task 22 */ }}>[dev] seed</Text> : null}
+          <Text onLongPress={__DEV__ ? () => { void seedIfEmpty(services).catch((e) => console.warn('[seed] failed', e)); } : undefined}>
+            {t('library.empty')}
+          </Text>
         </View>
       ) : (
         <FlatList
