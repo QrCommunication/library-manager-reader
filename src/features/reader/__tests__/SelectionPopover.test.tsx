@@ -22,4 +22,40 @@ describe('SelectionPopover', () => {
     expect(onCopy).toHaveBeenCalledTimes(1);
     expect(screen.getByText('mot')).toBeOnTheScreen();
   });
+
+  it('offers the Surligner action that requests highlight mode', async () => {
+    const onHighlightPress = jest.fn();
+    await render(
+      <SelectionPopover
+        selection={selection}
+        onHighlightPress={onHighlightPress}
+        onDefine={() => {}}
+        onTranslate={() => {}}
+        onCopy={() => {}}
+        onDismiss={() => {}}
+      />,
+    );
+    await fireEvent.press(screen.getByText('Surligner'));
+    expect(onHighlightPress).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('highlight-yellow')).toBeNull();
+  });
+
+  it('exposes highlight colors when requested and emits the chosen color', async () => {
+    const onHighlight = jest.fn();
+    await render(
+      <SelectionPopover
+        selection={selection}
+        onDefine={() => {}}
+        onTranslate={() => {}}
+        onCopy={() => {}}
+        highlightMode
+        onHighlight={onHighlight}
+        onDismiss={() => {}}
+      />,
+    );
+    // in color mode the three text actions give way to the four pastilles
+    expect(screen.queryByText('Définir')).toBeNull();
+    await fireEvent.press(screen.getByTestId('highlight-yellow'));
+    expect(onHighlight).toHaveBeenCalledWith('yellow');
+  });
 });

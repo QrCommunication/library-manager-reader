@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -8,13 +8,17 @@ import { EngineWebView } from './EngineWebView';
 import { ProgressSlider } from './ProgressSlider';
 import { TocPanel } from './TocPanel';
 import { BookmarksPanel } from './BookmarksPanel';
+import { AnnotationsPanel } from './AnnotationsPanel';
 import { TypographyPanel } from './TypographyPanel';
+import { SelectionPopover, type SelectionState } from './SelectionPopover';
+import { DefinitionSheet } from './DefinitionSheet';
 import { useReaderSettingsStore } from '../settings/readerSettingsStore';
 import type { ReaderBridge } from '../../core/reader/bridge';
+import { uuidV7 } from '../../core/uuid';
 import { themeTokens } from '../../theme/tokens';
 import { useWindowLayout } from '../../ui/windowClasses';
 
-type PanelName = 'toc' | 'bookmarks' | 'typography';
+type PanelName = 'toc' | 'bookmarks' | 'typography' | 'annotations';
 
 export function ReaderScreen({ bookId }: { bookId: string }) {
   const { t } = useTranslation();
@@ -27,6 +31,42 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
   const [chromeVisible, setChromeVisible] = useState(false);
   const [panel, setPanel] = useState<PanelName | null>(null);
   const closePanel = () => setPanel(null);
+  const [selection, setSelection] = useState<SelectionState | null>(null);
+  const [highlightMode, setHighlightMode] = useState(false);
+  const [sheet, setSheet] = useState<{ word: string; lang: string | null; mode: 'define' | 'translate' } | null>(null);
+
+  // The anchored bubble lives only as long as the engine selection does; each
+  // new selectionChanged restarts from the plain actions (never a stale color
+  // row).
+  useEffect(() => {
+    if (!bridge) return;
+    return bridge.onSelectionChanged((s) => {
+      setSelection(s.text && s.rect ? { text: s.text, rect: s.rect, cfi: s.cfi, lang: s.lang } : null);
+      setHighlightMode(false);
+    });
+  }, [bridge]);
+
+  // clearing on position change must not wait for an effect tick (stale
+  // popovers must not survive a page turn) — render-time adjustment, the same
+  // pattern as useReaderSession's session key
+  const [seenFraction, setSeenFraction] = useState(fraction);
+  if (seenFraction !== fraction) {
+    setSeenFraction(fraction);
+    setSelection(null);
+  }
+
+  // replay persisted highlights once the session is ready (engine overlays do
+  // not survive a page reload; the engine re-adds per section on relocate)
+  useEffect(() => {
+    if (state !== 'ready' || !bridge) return;
+    let cancelled = false;
+    void (async () => {
+      const list = await services.annotations.listByBook(bookId);
+      if (cancelled) return;
+      for (const a of list) bridge.addHighlight(a.id, a.cfi, a.color);
+    })();
+    return () => { cancelled = true; };
+  }, [state, bridge, bookId, services]);
 
   // Non-ready layouts keep the engine WebView mounted whenever a bridge exists
   // (loading AND error states): the engine's engineReady announcement can only
@@ -90,6 +130,9 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
               <Pressable hitSlop={8} onPress={() => setPanel('typography')} accessibilityLabel={t('reader.typography')}>
                 <Text style={styles.barGlyph}>{'Aa'}</Text>
               </Pressable>
+              <Pressable hitSlop={8} onPress={() => setPanel('annotations')} accessibilityLabel={t('annotations.title')}>
+                <Text style={styles.barGlyph}>{'✎'}</Text>
+              </Pressable>
             </View>
           </View>
           <View style={styles.bottomBar}>
@@ -107,6 +150,9 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
               {panel === 'bookmarks' ? (
                 <BookmarksPanel bookId={bookId} bridge={reader} onNavigate={navigateFromPanel} />
               ) : null}
+              {panel === 'annotations' ? (
+                <AnnotationsPanel bookId={bookId} bridge={reader} onNavigate={navigateFromPanel} />
+              ) : null}
               {panel === 'typography' ? (
                 <TypographyPanel
                   settings={settings}
@@ -116,6 +162,37 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
             </View>
           </View>
         </Modal>
+      ) : null}
+      {selection ? (
+        <SelectionPopover
+          selection={selection}
+          highlightMode={highlightMode}
+          onHighlightPress={() => setHighlightMode(true)}
+          onHighlight={(color) => {
+            const sel = selection;
+            if (sel.cfi) {
+              void services.annotations.add({
+                id: uuidV7(), bookId, cfi: sel.cfi, color, note: null, excerpt: sel.text, createdAt: Date.now(),
+              }).then((a) => { reader.addHighlight(a.id, a.cfi, color); });
+            }
+            setSelection(null);
+            setHighlightMode(false);
+          }}
+          onDefine={() => { setSheet({ word: selection.text, lang: selection.lang ?? null, mode: 'define' }); setSelection(null); }}
+          onTranslate={() => { setSheet({ word: selection.text, lang: selection.lang ?? null, mode: 'translate' }); setSelection(null); }}
+          onCopy={() => { reader.copySelection(); setSelection(null); }}
+          onDismiss={() => { setSelection(null); setHighlightMode(false); }}
+        />
+      ) : null}
+      {sheet ? (
+        <DefinitionSheet
+          // fresh mount per selection: no stale results carried across lookups
+          key={`${sheet.word}|${sheet.lang ?? ''}|${sheet.mode}`}
+          word={sheet.word}
+          lang={sheet.lang}
+          initialMode={sheet.mode}
+          onClose={() => setSheet(null)}
+        />
       ) : null}
     </View>
   );
