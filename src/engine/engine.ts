@@ -46,8 +46,17 @@ export function onAppMessage(h: Handler): () => void {
   return () => handlers.delete(h);
 }
 
-function receive(raw: unknown): void {
-  const data = typeof raw === 'string' ? raw : (raw as { data?: unknown })?.data;
+function receive(e: Event): void {
+  const ev = e as MessageEvent;
+  // Only the host app may drive the engine: react-native-webview delivers
+  // RN→Web posts as synthetic 'message' events on `document` (Android: no
+  // source/origin) or as window.postMessage from the host itself (iOS:
+  // source === window, same opaque origin). Book iframes posting to the
+  // parent window carry a foreign source and a real origin — both rejected.
+  if (ev.source != null && ev.source !== window) return;
+  const origin = ev.origin;
+  if (typeof origin === 'string' && origin !== '' && origin !== 'null' && origin !== window.location.origin) return;
+  const { data } = ev;
   if (typeof data !== 'string') return;
   try {
     const msg = JSON.parse(data) as AppToEngine;
