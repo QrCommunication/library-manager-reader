@@ -14,7 +14,7 @@ export function ImportResultsSheet({ outcomes, onClose }: { outcomes: ImportOutc
           <Text style={s.title}>{t('import.results.title')}</Text>
           {outcomes.map((o) => (
             <Text key={o.uri} numberOfLines={1}>
-              {o.uri.split('/').pop() ?? o.uri} — {o.ok ? '✓' : t(`import.failed.${o.reason === 'io_error' ? 'parse' : o.reason}`)}
+              {o.uri.split('/').pop() ?? o.uri} — {o.ok ? '✓' : t(`import.failed.${o.reason === 'io_error' || o.reason === 'parse_failed' ? 'parse' : o.reason}`)}
             </Text>
           ))}
         </View>
