@@ -32,8 +32,10 @@ describe('settingsRepo', () => {
     const repo = createSettingsRepo(db);
     const prefs = await repo.getUiPrefs();
     expect(prefs.language).toBe('fr');
-    expect(prefs.libreTranslateUrl).toBe('https://libretranslate.com');
-    expect(prefs.libreTranslateApiKey).toBe('');
+    // shipped translation endpoint: the shared community server, key included —
+    // translation works out of the box, a stored custom URL still wins
+    expect(prefs.libreTranslateUrl).toBe('https://translate.rlconseil.net');
+    expect(prefs.libreTranslateApiKey).toBe('73d6bbf4-eaba-4bbf-ad82-d58f9ccba23d');
   });
 
   it('merges new ttsRate/brightness defaults into a stored pre-tts readerSettings row', async () => {

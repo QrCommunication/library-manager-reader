@@ -32,6 +32,20 @@ describe('DefinitionSheet', () => {
     expect(lookup.translate).toHaveBeenCalledWith('book', 'en', 'fr');
   });
 
+  it('translates with auto source detection when the book language is unknown', async () => {
+    const lookup = {
+      define: jest.fn(async () => []),
+      translate: jest.fn(async () => 'traduit'),
+    };
+    await render(
+      <ServicesProvider value={baseServices(lookup)}>
+        <DefinitionSheet word="wort" lang={null} initialMode="translate" onClose={() => {}} />
+      </ServicesProvider>,
+    );
+    expect(await screen.findByText('traduit')).toBeOnTheScreen();
+    expect(lookup.translate).toHaveBeenCalledWith('wort', 'auto', 'fr');
+  });
+
   it('renders the offline error state', async () => {
     const lookup = { define: jest.fn(async () => { throw new LookupError('offline'); }), translate: jest.fn() };
     await render(
