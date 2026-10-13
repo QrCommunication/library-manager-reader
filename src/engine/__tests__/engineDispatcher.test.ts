@@ -10,15 +10,25 @@ let posted: EngineMsg[] = [];
 let bootMessages: EngineMsg[] = [];
 // open() captures + 'load' listener bookkeeping (mock-prefixed: referenced from the hoisted factory)
 const mockOpened: unknown[] = [];
-const mockLoadListeners: (() => void)[] = [];
+const mockLoadListeners: ((e: unknown) => void)[] = [];
 let mockInitCalls = 0;
 // headless extraction must parse via makeBook (pure data), never via the renderer
 const mockMakeBook = jest.fn();
+// concentration live-toggle: the section doc the renderer reports + setStyles calls
+let mockCurrentDoc: unknown = null;
+const mockStyleCalls: string[] = [];
 
 jest.mock('foliate-js/view.js', () => ({
   View: class {
     // no renderer pre-open (mirrors real foliate: renderer exists only after open)
-    renderer: undefined;
+    renderer = {
+      setStyles(css: string): void { mockStyleCalls.push(css); },
+      getContents(): { index: number; doc?: unknown }[] {
+        return mockCurrentDoc ? [{ index: 0, doc: mockCurrentDoc }] : [];
+      },
+      async next(): Promise<void> {},
+      async prev(): Promise<void> {},
+    };
     book = { metadata: { title: 'T', author: null, language: null, publisher: null, identifier: null } };
     addEventListener(type: string, fn: () => void): void {
       if (type === 'load') mockLoadListeners.push(fn);
@@ -30,7 +40,10 @@ jest.mock('foliate-js/view.js', () => ({
     }
     async open(file: unknown): Promise<void> {
       mockOpened.push(file);
-      for (const fn of [...mockLoadListeners]) fn();
+      // foliate always dispatches a real event: the engine's listener reads
+      // e.detail — open emits one without a section doc (the doc arrives with
+      // the first render driven by init())
+      for (const fn of [...mockLoadListeners]) fn({ detail: { doc: null, index: 0 } });
     }
     // real foliate: init() drives the first render that makes 'load' fire;
     // open() alone never displays anything
@@ -98,6 +111,90 @@ const feed = (msg: unknown): void => {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const engineErrors = () => posted.filter((m) => m.type === 'engineError');
 
+// ---- minimal DOM stubs for the concentration (bionic) transform ----
+type StubNode = {
+  nodeType: number; tagName?: string; textContent?: string; parentNode: StubNode | null;
+  childNodes: StubNode[];
+  append(...ns: StubNode[]): void;
+  replaceChild(fresh: StubNode, old: StubNode): void;
+  setAttribute(name: string, value: string): void;
+  addEventListener(type: string, fn: () => void): void;
+  querySelectorAll(selector: string): StubNode[];
+};
+
+const stubElement = (tag: string): StubNode => ({
+  nodeType: 1, tagName: tag, textContent: '', parentNode: null, childNodes: [],
+  append(...ns) { for (const n of ns) { n.parentNode = this; this.childNodes.push(n); } },
+  replaceChild(fresh, old) {
+    const i = this.childNodes.indexOf(old);
+    if (i < 0) return;
+    // real DOM: fragments splice their children in, plain nodes insert as-is;
+    // inserting re-parents each inserted child
+    const inserted = fresh.nodeType === 11 ? fresh.childNodes : [fresh];
+    this.childNodes.splice(i, 1, ...inserted);
+    for (const n of inserted) n.parentNode = this;
+  },
+  setAttribute() {},
+  addEventListener() {},
+  querySelectorAll(selector) {
+    if (!selector.startsWith('b[')) return [];
+    const found: StubNode[] = [];
+    const scan = (n: StubNode) => {
+      for (const c of n.childNodes) {
+        if (c.nodeType === 1) { if (c.tagName === 'b') found.push(c); scan(c); }
+      }
+    };
+    scan(this);
+    return found;
+  },
+});
+
+const stubText = (text: string): StubNode => ({
+  nodeType: 3, textContent: text, parentNode: null, childNodes: [],
+  append() {}, replaceChild() {}, setAttribute() {}, addEventListener() {}, querySelectorAll: () => [],
+});
+
+const stubFragment = (): StubNode => ({
+  nodeType: 11, textContent: '', parentNode: null, childNodes: [],
+  append(...ns) { for (const n of ns) { n.parentNode = this; this.childNodes.push(n); } },
+  replaceChild() {}, setAttribute() {}, addEventListener() {}, querySelectorAll: () => [],
+});
+
+const makeStubDoc = (bodyText: string): Document & { body: StubNode } => {
+  const body = stubElement('body');
+  body.append(stubText(bodyText));
+  return { body, addEventListener: () => {}, querySelectorAll: () => [] } as unknown as Document & { body: StubNode };
+};
+
+const boldSegments = (body: StubNode): string[] => {
+  const out: string[] = [];
+  const scan = (n: StubNode) => {
+    for (const c of n.childNodes) {
+      if (c.nodeType === 1 && c.tagName === 'b') out.push(c.textContent ?? '');
+      else scan(c);
+    }
+  };
+  scan(body);
+  return out;
+};
+
+const plainText = (body: StubNode): string => {
+  let out = '';
+  const scan = (n: StubNode) => {
+    for (const c of n.childNodes) {
+      if (c.nodeType === 3) out += c.textContent ?? '';
+      else scan(c);
+    }
+  };
+  scan(body);
+  return out;
+};
+
+// drive the module-level 'load' listeners the way foliate dispatches them
+const fireLoad = (doc: unknown, index = 0): void => {
+  for (const fn of [...mockLoadListeners]) (fn as (e: unknown) => void)({ detail: { doc, index } });
+};
+
 describe('engine dispatcher error surfacing', () => {
   beforeEach(() => { posted = []; });
 
@@ -125,7 +222,7 @@ describe('engine dispatcher error surfacing', () => {
     feed({ type: 'goToFraction', fraction: 0.5 });
     feed({ type: 'next' });
     feed({ type: 'prev' });
-    feed({ type: 'applySettings', settings: { fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day' } });
+    feed({ type: 'applySettings', settings: { fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0, concentration: false } });
     // TTS commands are gated the same way (ttsStart/ttsNext per the Task 14
     // brief); ttsStop is NOT gated but nulling the null state must stay a
     // silent no-op pre-load
@@ -142,7 +239,6 @@ describe('engine opens visible-reader payloads as named Files (foliate sniffs fo
   beforeEach(() => {
     posted = [];
     mockOpened.length = 0;
-    mockLoadListeners.length = 0;
     mockInitCalls = 0;
     mockMakeBook.mockReset();
     // esbuild define absent under jest: provide the base64 global the engine reads
@@ -164,7 +260,6 @@ describe('engine extracts metadata headlessly via makeBook (never the renderer)'
   beforeEach(() => {
     posted = [];
     mockOpened.length = 0;
-    mockLoadListeners.length = 0;
     mockInitCalls = 0;
     mockMakeBook.mockReset();
     (globalThis as Record<string, unknown>).__UNRAR_WASM_B64__ = 'QQ==';
@@ -245,5 +340,75 @@ describe('engine extracts metadata headlessly via makeBook (never the renderer)'
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('engine concentration mode (bionic word starts)', () => {
+  const BASE = {
+    fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20,
+    theme: 'day', ttsRate: 1, brightness: 0, concentration: false,
+  };
+
+  beforeEach(async () => {
+    posted = [];
+    mockOpened.length = 0;
+    mockInitCalls = 0;
+    mockMakeBook.mockReset();
+    mockCurrentDoc = null;
+    mockStyleCalls.length = 0;
+    const docGlobal = globalThis.document as unknown as Record<string, unknown>;
+    docGlobal.createDocumentFragment = () => stubFragment();
+    docGlobal.createElement = (tag: string) => stubElement(tag);
+    docGlobal.createTextNode = (text: string) => stubText(text);
+    // the engine module keeps settings/documentLoaded across tests in this file:
+    // pin a known baseline (book loaded, concentration off) through the real
+    // protocol so no test depends on execution order
+    fireLoad(makeStubDoc('intro'));
+    feed({ type: 'applySettings', settings: { ...BASE } });
+    await flush();
+    mockStyleCalls.length = 0;
+  });
+
+  it('bolds word starts synchronously at section load when enabled', async () => {
+    // first load unlocks post-load settings handling (documentLoaded)
+    fireLoad(makeStubDoc('intro'));
+    await flush();
+    expect(posted.some((m) => m.type === 'engineError')).toBe(false);
+
+    const doc = makeStubDoc('Bonjour le monde');
+    mockCurrentDoc = doc;
+    feed({ type: 'applySettings', settings: { ...BASE, concentration: true } });
+    await flush();
+    // live toggle: the displayed section is transformed immediately and setStyles
+    // drives the paginator re-measure
+    expect(boldSegments(doc.body)).toEqual(['Bon', 'l', 'mo']);
+    expect(mockStyleCalls).toHaveLength(1);
+    // every subsequently loaded section is transformed pre-pagination
+    const doc2 = makeStubDoc('Salut toi');
+    fireLoad(doc2, 1);
+    expect(boldSegments(doc2.body)).toEqual(['Sa', 't']);
+    expect(posted.some((m) => m.type === 'engineError')).toBe(false);
+  });
+
+  it('un-bolds on live toggle-off', async () => {
+    fireLoad(makeStubDoc('intro'));
+    await flush();
+    const doc = makeStubDoc('Bonjour le monde');
+    mockCurrentDoc = doc;
+    feed({ type: 'applySettings', settings: { ...BASE, concentration: true } });
+    await flush();
+    expect(boldSegments(doc.body)).toHaveLength(3);
+    feed({ type: 'applySettings', settings: { ...BASE, concentration: false } });
+    await flush();
+    expect(boldSegments(doc.body)).toHaveLength(0);
+    expect(plainText(doc.body)).toBe('Bonjour le monde');
+  });
+
+  it('leaves sections untouched when disabled', async () => {
+    const doc = makeStubDoc('Bonjour le monde');
+    fireLoad(doc);
+    await flush();
+    expect(boldSegments(doc.body)).toHaveLength(0);
+    expect(plainText(doc.body)).toBe('Bonjour le monde');
   });
 });

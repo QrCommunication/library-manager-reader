@@ -110,7 +110,53 @@ const cssFor = (s: ReaderSettings): string => {
   return `@namespace epub "http://www.idpf.org/2007/ops";
     body{background:${t.bg};color:${t.fg};font-family:${family};font-size:${s.fontSize}px;line-height:${s.lineHeight};}
     a{color:${t.link};}
-    p{margin:0 0 ${Math.round(s.fontSize * 0.6)}px 0;}`;
+    p{margin:0 0 ${Math.round(s.fontSize * 0.6)}px 0;}
+    b[data-concentration]{font-weight:700;}`;
+};
+
+// Bionic-reading "concentration": bold the first ~40% of letters of each word
+// (1–4 letters). Runs synchronously in the 'load' listener — foliate's paginator
+// measures the section only after the load dispatch completes, so pagination
+// sees the transformed text and no re-layout is needed. Toggling on a displayed
+// section reuses the same wrap; toggling off unwraps, and setStyles() then
+// forces the paginator to re-measure (expand path).
+const CONCENTRATION_ATTR = 'data-concentration';
+
+const bionicFragment = (text: string): DocumentFragment => {
+  const frag = document.createDocumentFragment();
+  for (const part of text.split(/(\s+)/)) {
+    if (!part) continue;
+    const word = part.match(/^([^\p{L}\p{N}]*)([\p{L}\p{N}]+)([\s\S]*)$/u);
+    if (!word) { frag.append(document.createTextNode(part)); continue; }
+    const pre = word[1] ?? '';
+    const core = word[2] ?? '';
+    const post = word[3] ?? '';
+    const n = Math.min(4, Math.max(1, Math.round(core.length * 0.4)));
+    const b = document.createElement('b');
+    b.setAttribute(CONCENTRATION_ATTR, '');
+    b.textContent = core.slice(0, n);
+    frag.append(document.createTextNode(pre), b, document.createTextNode(core.slice(n) + post));
+  }
+  return frag;
+};
+
+const applyConcentration = (doc: Document, on: boolean): void => {
+  const root = doc.body ?? doc;
+  if (!on) {
+    for (const b of Array.from(root.querySelectorAll(`b[${CONCENTRATION_ATTR}]`))) {
+      b.parentNode?.replaceChild(document.createTextNode(b.textContent ?? ''), b);
+    }
+    return;
+  }
+  const walk = (node: Node): void => {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === 3) {
+        const text = child.textContent ?? '';
+        if (/\S/.test(text)) child.parentNode?.replaceChild(bionicFragment(text), child);
+      } else if (child.nodeType === 1) walk(child);
+    }
+  };
+  walk(root);
 };
 
 const applySettings = (s: ReaderSettings): void => {
@@ -215,6 +261,9 @@ view.addEventListener('load', (e: Event) => {
   if (detail?.doc) {
     const doc = detail.doc;
     const index = detail.index ?? 0;
+    // synchronous, pre-pagination: the paginator measures the section after
+    // the load dispatch completes, so it sees the transformed text
+    if (settings.concentration) applyConcentration(doc, true);
     // the paginator emits no selection events: watch the section doc ourselves
     let collapsedAt = 0;
     doc.addEventListener('selectionchange', () => {
@@ -311,7 +360,7 @@ view.addEventListener('relocate', () => {
 });
 
 let settings: ReaderSettings = {
-  fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0,
+  fontFamily: 'serif', fontSize: 18, lineHeight: 1.6, margin: 20, theme: 'day', ttsRate: 1, brightness: 0, concentration: false,
 };
 
 let assembler: ReturnType<typeof createChunkAssembler> | null = null;
@@ -513,7 +562,20 @@ async function handle(msg: AppToEngine): Promise<void> {
     case 'goToFraction': await view.goToFraction(msg.fraction); break;
     case 'next': view.renderer.next(); break;
     case 'prev': view.renderer.prev(); break;
-    case 'applySettings': settings = msg.settings; applySettings(msg.settings); break;
+    case 'applySettings': {
+      const wasOn = settings.concentration === true;
+      settings = msg.settings;
+      const on = msg.settings.concentration === true;
+      // live toggle: transform (or unwrap) the displayed sections, then let
+      // setStyles() force the paginator to re-measure the changed text
+      if (documentLoaded && on !== wasOn) {
+        for (const { doc } of view.renderer.getContents()) {
+          if (doc) applyConcentration(doc, on);
+        }
+      }
+      applySettings(msg.settings);
+      break;
+    }
     case 'captureBookmark': {
       let excerpt = '';
       try {
