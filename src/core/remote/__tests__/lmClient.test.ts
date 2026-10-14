@@ -169,6 +169,27 @@ describe('LmClient — /api/v1/mobile business endpoints', () => {
     expect(calls[0]!.url).toBe(`${LM_BASE_URL}/api/v1/mobile/spaces/s1/books?pageSize=50&cursor=cur-1`);
   });
 
+  it('passes the catalogue search and series filters (search= on /books)', async () => {
+    const { calls, client } = make(() => okJson({ items: [], nextCursor: 'cur-2', total: 0 }));
+    await client.listBooks('s1', { search: 'verne', series: 'Pern' });
+    expect(calls[0]!.url).toBe(`${LM_BASE_URL}/api/v1/mobile/spaces/s1/books?pageSize=50&search=verne&series=Pern`);
+  });
+
+  it('searches through the dedicated /books/search route (q required, total null)', async () => {
+    const { calls, client } = make(() => okJson({ items: [], nextCursor: null, total: null }));
+    const page = await client.searchBooks('s1', { q: 'Jules Verne', series: 'Pern', sort: 'title', direction: 'asc' });
+    expect(page.total).toBeNull();
+    expect(calls[0]!.url).toBe(
+      `${LM_BASE_URL}/api/v1/mobile/spaces/s1/books/search?pageSize=50&q=Jules+Verne&series=Pern&sort=title&direction=asc`,
+    );
+  });
+
+  it('continues a search with the cursor while keeping every parameter', async () => {
+    const { calls, client } = make(() => okJson({ items: [], nextCursor: null, total: null }));
+    await client.searchBooks('s1', { q: 'verne', cursor: 'cur-9' });
+    expect(calls[0]!.url).toBe(`${LM_BASE_URL}/api/v1/mobile/spaces/s1/books/search?pageSize=50&q=verne&cursor=cur-9`);
+  });
+
   it('fetches book details with immutable versions', async () => {
     const { calls, client } = make(() => okJson({
       id: 'b1', title: 'Dune', author: 'F. Herbert',
