@@ -208,6 +208,9 @@ export function SettingsScreen() {
   };
 
   const lmAuthComplete = (callbackUrl: string) => {
+    // diagnostics keep to error codes and the callback path — never query
+    // values (code) nor tokens (spec §10)
+    console.warn('[lm] callback captured', callbackUrl.split('?')[0]);
     setAuthUrl(null);
     void (async () => {
       setLmBusy(true);
@@ -217,6 +220,7 @@ export function SettingsScreen() {
         void useUiPrefsStore.getState().hydrate();
         Alert.alert(t('settings.lm.title'), t('settings.lm.loginOk'));
       } catch (err) {
+        console.warn('[lm] sign-in failed', err instanceof LmError ? `kind=${err.kind} code=${err.code ?? 'none'} msg=${err.message}` : String(err));
         Alert.alert(t('settings.lm.title'), lmErrorMessage(err));
       } finally {
         setLmBusy(false);

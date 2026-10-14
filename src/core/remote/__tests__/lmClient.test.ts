@@ -18,6 +18,9 @@ describe('lmExchangeCode — authorization_code + PKCE', () => {
     const { url, init } = calls[0]!;
     expect(url).toBe(`${LM_BASE_URL}/api/mobile/oauth/token`);
     expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
+    // the server's CSRF layer treats Origin-less POSTs as cross-site (403);
+    // a first-party client must announce its own origin like a browser would
+    expect((init.headers as Record<string, string>).Origin).toBe('https://library-manager.com');
     const body = String(init.body);
     expect(body).toContain('grant_type=authorization_code');
     expect(body).toContain('client_id=library-manager-mobile');
