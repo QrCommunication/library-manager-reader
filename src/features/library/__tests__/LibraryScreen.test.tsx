@@ -57,6 +57,54 @@ describe('LibraryScreen', () => {
     expect(await screen.findByText('Votre bibliothèque est vide')).toBeOnTheScreen();
   });
 
+  it('opens the remote spaces sheet from the library title and offers sign-in when not connected', async () => {
+    const services = await makeServices();
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent.press(await screen.findByLabelText('library-manager.com'));
+    expect(await screen.findByText('Connectez-vous à library-manager.com pour retrouver vos espaces')).toBeOnTheScreen();
+    expect(screen.getByText('Ouvrir les réglages')).toBeOnTheScreen();
+  });
+
+  it('lists a space books and marks local matches instead of offering download/upload', async () => {
+    const services = await makeServices();
+    const mk = (title: string) =>
+      services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    await mk('Serveur');
+    await mk('LocalOnly');
+    await services.settings.putUiPrefs({
+      ...(await services.settings.getUiPrefs()),
+      lmUsername: 'rony', lmAccessToken: 'tok', lmRefreshToken: 'rt', lmTokenExpiresAt: Date.now() + 3600_000,
+    });
+    const fetchMock = jest.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.endsWith('/api/spaces')) {
+        return new Response(JSON.stringify([{ id: 's1', name: 'Perso', booksCount: 1 }]), { status: 200 });
+      }
+      if (u.endsWith('/api/spaces/s1/books')) {
+        return new Response(JSON.stringify([
+          { id: 'rb1', title: 'Serveur', author: null, series: null, seriesIndex: null, format: 'epub', fileSize: 10, updatedAt: 5 },
+        ]), { status: 200 });
+      }
+      return new Response('nope', { status: 404 });
+    });
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as unknown as typeof fetch);
+    try {
+      await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+      fireEvent.press(await screen.findByLabelText('library-manager.com'));
+      fireEvent.press(await screen.findByText('Perso'));
+      // remote 'Serveur' matches the local copy → checkmark, no download button
+      expect(await screen.findByText('Sur le serveur (1)')).toBeOnTheScreen();
+      expect(screen.queryByLabelText('Télécharger Serveur')).toBeNull();
+      // the unmatched local book lands in the upload section
+      expect(await screen.findByText('Locaux absents du serveur (1)')).toBeOnTheScreen();
+      expect(screen.getByLabelText('Envoyer LocalOnly')).toBeOnTheScreen();
+      expect(screen.getByText('Mettre à jour les métadonnées (IA)')).toBeOnTheScreen();
+      expect(screen.getByText('Synchroniser l’avancement')).toBeOnTheScreen();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('deletes via long-press menu, keeping files so the trash can restore', async () => {
     const services = await makeServices();
     const remove = jest.fn(async (_p: string) => {});
@@ -145,7 +193,7 @@ describe('LibraryScreen', () => {
     fireEvent.press(await screen.findByText('Bbb'));
     fireEvent.press(await screen.findByText('Ccc'));
     fireEvent.press(await screen.findByText('3 sélectionné(s)'));
-    fireEvent.press(await screen.findByText('Supprimer (3)')); // Alert confirm auto-fires
+    fireEvent.press(await screen.findByLabelText('Supprimer (3)')); // Alert confirm auto-fires
     await waitFor(async () => {
       const deleted = await services.books.listDeleted();
       expect(deleted.map((x: { id: string }) => x.id).sort()).toEqual([a.id, b.id, c.id].sort());
@@ -163,25 +211,6 @@ describe('LibraryScreen', () => {
     fireEvent.press(await screen.findByLabelText('Quitter la sélection'));
     expect(await screen.findByText('Aaa')).toBeOnTheScreen();
     expect(screen.queryByText(/sélectionné/)).toBeNull();
-  });
-
-  it('refreshes only the selected books from the bulk metadata action', async () => {
-    const services = await makeServices();
-    const mk = (title: string) =>
-      services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
-    const a = await mk('Aaa');
-    const b = await mk('Bbb');
-    mockGetEngine.mockReturnValue({
-      extract: async () => ({ metadata: { title: 'Upd', author: null, language: null, publisher: null, identifier: null, series: null, seriesIndex: null }, coverJpegBase64: null, cbzBase64: null }),
-    });
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
-    fireEvent(await screen.findByText('Aaa'), 'longPress');
-    fireEvent.press(await screen.findByText('Sélectionner'));
-    fireEvent.press(await screen.findByText('Mettre à jour la sélection'));
-    await waitFor(async () => {
-      expect(await services.books.getBook(a.id)).toMatchObject({ title: 'Upd' });
-    });
-    expect(await services.books.getBook(b.id)).toMatchObject({ title: 'Bbb' });
   });
 
   it('edits metadata from the long-press menu with series autocomplete', async () => {
@@ -203,22 +232,6 @@ describe('LibraryScreen', () => {
       expect(await services.books.getBook(dune.id)).toMatchObject({ series: 'Fondation' });
     });
     expect(screen.queryByTestId('metadata-edit-sheet')).toBeNull();
-  });
-
-  it('refreshes every book metadata from its stored file via the header action', async () => {
-    const services = await makeServices();
-    const created = await services.books.createBook({ title: 'Wrong', author: null, format: 'epub', originalFormat: null, fileName: 'w.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
-    // every book ends up with a series, so the Open Library pass has nothing to fetch
-    mockGetEngine.mockReturnValue({
-      extract: async () => ({ metadata: { title: 'Right', author: 'Auth', language: 'fr', publisher: null, identifier: 'urn:isbn:9', series: 'Fondation', seriesIndex: 7 }, coverJpegBase64: null, cbzBase64: null }),
-    });
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
-    fireEvent.press(await screen.findByLabelText('Mettre à jour les métadonnées'));
-    await waitFor(async () => {
-      expect(await services.books.getBook(created.id)).toMatchObject({ title: 'Right', series: 'Fondation', seriesIndex: 7 });
-    });
-    expect(Alert.alert).toHaveBeenCalledWith('Métadonnées mises à jour', expect.stringMatching(/1 livre/));
-    expect(mockGetEngine).toHaveBeenCalled();
   });
 
   it('surfaces a pre-import crash (headless engine) in the results sheet with its detail', async () => {

@@ -14,7 +14,14 @@ export type BookSyncResult =
   | { kind: 'in_sync' }
   | { kind: 'pulled'; fraction: number }
   | { kind: 'pushed'; fraction: number }
-  | { kind: 'conflict'; digest: string; server: number; local: number };
+  | {
+      kind: 'conflict';
+      digest: string;
+      server: number;
+      local: number;
+      serverTimestamp: number | null;
+      localUpdatedAt: number;
+    };
 
 // percentages compared with KOReader's own rounding granularity (1/10000)
 const SYNC_EPSILON = 0.0001;
@@ -39,7 +46,57 @@ export async function syncBookProgress(
     return { kind: 'pushed', fraction: local.fraction };
   }
   if (Math.abs(server!.percentage - local!.fraction) <= SYNC_EPSILON) return { kind: 'in_sync' };
-  return { kind: 'conflict', digest, server: server!.percentage, local: local!.fraction };
+  return {
+    kind: 'conflict',
+    digest,
+    server: server!.percentage,
+    local: local!.fraction,
+    serverTimestamp: server!.timestamp,
+    localUpdatedAt: local!.updatedAt,
+  };
+}
+
+export interface LibrarySyncSummary {
+  pushed: number;
+  pulled: number;
+  inSync: number;
+  none: number;
+  // every conflict is resolved newest-wins and counted here AND in the side
+  // that won (pulled or pushed)
+  conflicts: number;
+  failed: number;
+}
+
+export async function syncLibraryProgress(
+  deps: BookSyncDeps,
+  books: readonly { id: string; filePath: string }[],
+): Promise<LibrarySyncSummary> {
+  const summary: LibrarySyncSummary = { pushed: 0, pulled: 0, inSync: 0, none: 0, conflicts: 0, failed: 0 };
+  for (const book of books) {
+    try {
+      const r = await syncBookProgress(deps, book, book.filePath);
+      if (r.kind === 'none') summary.none++;
+      else if (r.kind === 'in_sync') summary.inSync++;
+      else if (r.kind === 'pulled') summary.pulled++;
+      else if (r.kind === 'pushed') summary.pushed++;
+      else {
+        // a diverging position is not left to the user: the most recently
+        // read side wins (server timestamps ride the wire in unix seconds)
+        summary.conflicts++;
+        const serverMs = (r.serverTimestamp ?? 0) * 1000;
+        if (serverMs > r.localUpdatedAt) {
+          await applyServerProgress(deps, book.id, { percentage: r.server, timestamp: r.serverTimestamp });
+          summary.pulled++;
+        } else {
+          await pushLocalProgress(deps, r.digest, { fraction: r.local });
+          summary.pushed++;
+        }
+      }
+    } catch {
+      summary.failed++;
+    }
+  }
+  return summary;
 }
 
 export async function applyServerProgress(
@@ -61,7 +118,7 @@ export async function applyServerProgress(
 export async function pushLocalProgress(
   deps: BookSyncDeps,
   digest: string,
-  local: ReadingProgress,
+  local: Pick<ReadingProgress, 'fraction'>,
 ): Promise<boolean> {
   return deps.client.updateProgress(digest, progressString(local.fraction), local.fraction);
 }

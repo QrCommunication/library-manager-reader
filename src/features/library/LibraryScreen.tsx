@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme, useWindowDimensions } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
@@ -11,7 +11,7 @@ import { useBooks, type SortKey } from './useBooks';
 import { runImport } from '../../core/import/importService';
 import { SUPPORTED_MIME } from '../../core/import/mime';
 import { formatBytes } from '../../core/format';
-import type { Book } from '../../core/types';
+import type { Book, UiPrefs } from '../../core/types';
 import { themeTokens } from '../../theme/tokens';
 import { useWindowLayout } from '../../ui/windowClasses';
 import { BookGridItem } from './BookGridItem';
@@ -19,17 +19,36 @@ import { ImportResultsSheet, type ImportOutcome } from './ImportResultsSheet';
 import { MetadataEditSheet } from './MetadataEditSheet';
 import { getHeadlessEngine } from '../../core/reader/headlessEngine';
 import { purgeExpiredTrash } from '../../core/library/trashService';
-import { enrichSeriesFromOpenLibrary, refreshLibraryMetadata } from '../../core/library/metadataRefresh';
 import { buildExportEntries, zipEntries } from '../../core/library/exportService';
 import { storedFormat } from '../../core/library/fileMeta';
 import { saveBytesToUserDir, EXPORT_MIME } from '../../core/storage/saf';
 import { seedIfEmpty } from '../../dev/seed';
 import { parseSidecar, serializeSidecar } from '../../core/progress/koreaderSidecar';
-import { syncBookProgress, applyServerProgress, pushLocalProgress, type BookSyncDeps } from '../../core/progress/koreaderSyncService';
-import { KoSyncError, type KoSyncClient } from '../../core/progress/koreaderSync';
-import { isKoSyncConfigured, koSyncClientFromPrefs } from '../../core/progress/koSyncAccount';
+import { lmClientFromPrefs } from '../../core/remote/lmAccount';
+import { LmError, type LmBook, type LmClient, type LmSpace } from '../../core/remote/lmClient';
+import { matchRemoteBook, syncSpaceProgress } from '../../core/remote/lmSync';
 
 const SORTS: SortKey[] = ['recent', 'added', 'title', 'series'];
+
+const SUPPORTED_REMOTE_FORMATS = new Set(['epub', 'mobi', 'azw3', 'cbz', 'cbr']);
+
+const lmErrorMessage = (err: unknown, t: (k: string) => string): string => {
+  if (err instanceof LmError) {
+    if (err.kind === 'auth') return t('library.remote.authFailed');
+    if (err.kind === 'network') return t('library.remote.network');
+  }
+  return t('library.remote.failed');
+};
+
+const importReasonMessage = (outcome: ImportOutcome | undefined, t: (k: string) => string): string => {
+  if (!outcome || outcome.ok) return t('library.remote.failed');
+  switch (outcome.reason) {
+    case 'duplicate': return t('import.failed.duplicate');
+    case 'no_space': return t('import.failed.no_space');
+    case 'unsupported': return t('import.failed.unsupported');
+    default: return t('import.failed.parse');
+  }
+};
 
 export function LibraryScreen() {
   const { t, i18n } = useTranslation();
@@ -52,8 +71,15 @@ export function LibraryScreen() {
   const [editBook, setEditBook] = useState<Book | null>(null);
   const [seriesSheet, setSeriesSheet] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [remoteSheet, setRemoteSheet] = useState(false);
+  const [lmPrefs, setLmPrefs] = useState<UiPrefs | null>(null);
+  const [lmSpaces, setLmSpaces] = useState<LmSpace[] | null>(null);
+  const [activeSpace, setActiveSpace] = useState<LmSpace | null>(null);
+  const [remoteBooks, setRemoteBooks] = useState<LmBook[] | null>(null);
+  const [localBooks, setLocalBooks] = useState<Book[]>([]);
+  const [lmBusy, setLmBusy] = useState(false);
+  const lmClientRef = useRef<LmClient | null>(null);
   const selectionMode = selection.size > 0;
-  const [refreshingMeta, setRefreshingMeta] = useState(false);
   const { books, seriesList, progressMap, refresh } = useBooks(sort, query, seriesFilter);
   const { columns } = useWindowLayout();
 
@@ -98,64 +124,6 @@ export function LibraryScreen() {
     await services.books.markDeleted(book.id, Date.now());
     setMenuBook(null);
     await refresh();
-  };
-
-  const kosyncDeps = (client: KoSyncClient): BookSyncDeps => ({
-    readAt: (path, offset, length) => services.fs.readRange(path, offset, length),
-    getProgress: (id) => services.progress.getProgress(id),
-    saveProgress: (p) => services.progress.saveProgress(p),
-    client,
-  });
-
-  const kosyncErrorMessage = (err: unknown): string => {
-    if (!(err instanceof KoSyncError)) return t('library.kosync.failed');
-    if (err.kind === 'network') return t('library.kosync.network');
-    if (err.kind === 'auth') return t('library.kosync.authFailed');
-    return t('library.kosync.failed');
-  };
-
-  const syncWithKoreader = async (book: Book) => {
-    const prefs = await services.settings.getUiPrefs();
-    if (!isKoSyncConfigured(prefs)) {
-      Alert.alert(t('library.menu.kosync'), t('library.kosync.needAccount'));
-      return;
-    }
-    try {
-      const client = await koSyncClientFromPrefs(services.settings);
-      const deps = kosyncDeps(client);
-      const result = await syncBookProgress(deps, book, services.paths.bookPath(book.id, book.format));
-      if (result.kind === 'pulled') await refresh();
-      if (result.kind === 'none') Alert.alert(t('library.menu.kosync'), t('library.kosync.none'));
-      else if (result.kind === 'in_sync') Alert.alert(t('library.menu.kosync'), t('library.kosync.inSync'));
-      else if (result.kind === 'pulled') Alert.alert(t('library.menu.kosync'), t('library.kosync.pulled'));
-      else if (result.kind === 'pushed') Alert.alert(t('library.menu.kosync'), t('library.kosync.pushed'));
-      else {
-        const pct = (f: number) => Math.round(f * 100);
-        Alert.alert(
-          t('library.kosync.conflictTitle'),
-          t('library.kosync.conflict', { server: pct(result.server), local: pct(result.local) }),
-          [
-            { text: t('common.cancel') },
-            {
-              text: t('library.kosync.useServer', { percent: pct(result.server) }),
-              onPress: () => void (async () => {
-                await applyServerProgress(deps, book.id, { percentage: result.server, timestamp: null });
-                await refresh();
-              })(),
-            },
-            {
-              text: t('library.kosync.useLocal', { percent: pct(result.local) }),
-              onPress: () => void (async () => {
-                const local = await services.progress.getProgress(book.id);
-                if (local) await pushLocalProgress(deps, result.digest, local);
-              })(),
-            },
-          ],
-        );
-      }
-    } catch (err) {
-      Alert.alert(t('library.menu.kosync'), kosyncErrorMessage(err));
-    }
   };
 
   const exportSidecar = async (book: Book) => {
@@ -247,6 +215,21 @@ export function LibraryScreen() {
     }
   };
 
+  // whole library: every non-deleted book regardless of the active filters
+  const exportLibrary = async () => {
+    try {
+      const all = await services.books.listBooks({ sort: 'added' });
+      if (all.length === 0) return;
+      const zip = zipEntries(await buildExportEntries(exportDeps(), all));
+      const stamp = new Date().toISOString().slice(0, 10);
+      const saved = await saveBytesToUserDir(`library-reader-export-${stamp}.zip`, EXPORT_MIME.zip!, zip);
+      if (saved) Alert.alert(t('library.exportAll'), t('library.export.done'));
+    } catch (err) {
+      console.warn('[library] export failed', err);
+      Alert.alert(t('library.exportAll'), t('library.export.failed'));
+    }
+  };
+
   const toggleSelect = (id: string) =>
     setSelection((cur) => {
       const next = new Set(cur);
@@ -272,65 +255,194 @@ export function LibraryScreen() {
     ]);
   };
 
-  const refreshMeta = async () => {
-    if (refreshingMeta || importing) return;
-    setRefreshingMeta(true);
-    setProgress({ done: 0, total: 0 });
-    try {
-      const deps = { fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine() };
-      const results = await refreshLibraryMetadata(deps, (p) => setProgress(p));
-      const enriched = await enrichSeriesFromOpenLibrary(deps, fetch, (p) => setProgress(p));
-      const updated = results.filter((r) => r.updated).length;
-      const series = enriched.filter((r) => r.updated).length;
-      const failed = results.filter((r) => !r.updated && r.detail).length + enriched.filter((r) => r.detail).length;
-      Alert.alert(t('library.refreshDone'), t('library.refreshSummary', { updated, series, failed }));
-      await refresh();
-    } catch (err) {
-      Alert.alert(t('library.refreshDone'), err instanceof Error ? err.message : String(err));
-    } finally {
-      setRefreshingMeta(false);
-      setProgress(null);
-    }
+  // the sheet reads prefs straight from the repo: opening must reflect the
+  // state at that moment, not a snapshot captured on mount
+  const openRemoteSheet = () => {
+    setRemoteSheet(true);
+    void (async () => {
+      setLmBusy(true);
+      setLmSpaces(null);
+      setActiveSpace(null);
+      setRemoteBooks(null);
+      try {
+        const prefs = await services.settings.getUiPrefs();
+        setLmPrefs(prefs);
+        if (prefs.lmAccessToken === '') return;
+        const client = await lmClientFromPrefs(services.settings);
+        lmClientRef.current = client;
+        setLmSpaces(await client.listSpaces());
+      } catch (err) {
+        console.warn('[library] remote spaces failed', err);
+        setRemoteSheet(false);
+        Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
+      } finally {
+        setLmBusy(false);
+      }
+    })();
   };
 
-  // selection-scoped variant: re-extracts only the picked books (no Open
-  // Library pass — filling series is the whole-library button's job)
-  const bulkRefreshMeta = async () => {
-    if (refreshingMeta || importing) return;
-    const ids = [...selection];
-    setRefreshingMeta(true);
-    setProgress({ done: 0, total: ids.length });
-    try {
-      const deps = { fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine() };
-      const results = await refreshLibraryMetadata(deps, (p) => setProgress(p), ids);
-      const updated = results.filter((r) => r.updated).length;
-      const failed = results.length - updated;
-      Alert.alert(t('library.refreshDone'), t('library.refreshSummary', { updated, series: 0, failed }));
-      setSelection(new Set());
-      await refresh();
-    } catch (err) {
-      Alert.alert(t('library.refreshDone'), err instanceof Error ? err.message : String(err));
-    } finally {
-      setRefreshingMeta(false);
-      setProgress(null);
-    }
+  const enterSpace = (space: LmSpace) => {
+    const client = lmClientRef.current;
+    if (!client) return;
+    setActiveSpace(space);
+    void (async () => {
+      setLmBusy(true);
+      try {
+        const [remotes, locals] = await Promise.all([
+          client.listBooks(space.id),
+          services.books.listBooks({ sort: 'added' }),
+        ]);
+        setRemoteBooks(remotes);
+        setLocalBooks(locals);
+      } catch (err) {
+        console.warn('[library] remote books failed', err);
+        setActiveSpace(null);
+        Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
+      } finally {
+        setLmBusy(false);
+      }
+    })();
   };
+
+  // one-to-one match: the used set tracks local ids already claimed, so two
+  // remotes with the same title never steal each other's counterpart
+  const remoteRows = () => {
+    const used = new Set<string>();
+    const rows = (remoteBooks ?? []).map((remote) => {
+      const local = matchRemoteBook(remote, localBooks, used);
+      if (local) used.add(local.id);
+      return { remote, local };
+    });
+    return { rows, uploadable: localBooks.filter((b) => !used.has(b.id)) };
+  };
+
+  // remote files land in a staging dir so runImport (extraction, dedup,
+  // cover, canonical storage) runs on a plain file path, then gets cleaned up
+  const downloadRemote = (rb: LmBook) => {
+    const client = lmClientRef.current;
+    const space = activeSpace;
+    if (!client || !space) return;
+    void (async () => {
+      setLmBusy(true);
+      const dir = `${services.paths.root}/remote-import`;
+      const tmpPath = `${dir}/${rb.id}.${rb.format}`;
+      try {
+        const bytes = await client.downloadBook(space.id, rb.id);
+        await services.fs.ensureDir(dir);
+        await services.fs.writeBytes(tmpPath, bytes);
+        const [outcome] = await runImport([tmpPath], {
+          fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine(),
+          untitledTitle: t('library.untitled'),
+        });
+        if (outcome?.ok) {
+          Alert.alert(t('library.remote.title'), t('library.remote.downloadDone'));
+          setLocalBooks(await services.books.listBooks({ sort: 'added' }));
+          await refresh();
+        } else {
+          Alert.alert(t('library.remote.title'), importReasonMessage(outcome, t));
+        }
+      } catch (err) {
+        console.warn('[library] remote download failed', err);
+        Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
+      } finally {
+        await services.fs.remove(tmpPath).catch(() => {});
+        setLmBusy(false);
+      }
+    })();
+  };
+
+  const uploadLocal = (book: Book) => {
+    const client = lmClientRef.current;
+    const space = activeSpace;
+    if (!client || !space) return;
+    void (async () => {
+      setLmBusy(true);
+      try {
+        const bytes = await services.fs.readBytes(services.paths.bookPath(book.id, book.format));
+        await client.uploadBook(space.id, {
+          fileName: book.fileName,
+          mime: EXPORT_MIME[book.format] ?? 'application/octet-stream',
+          bytes,
+        }, { title: book.title, author: book.author, series: book.series, seriesIndex: book.seriesIndex });
+        Alert.alert(t('library.remote.title'), t('library.remote.uploadDone'));
+        setRemoteBooks(await client.listBooks(space.id));
+      } catch (err) {
+        console.warn('[library] remote upload failed', err);
+        Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
+      } finally {
+        setLmBusy(false);
+      }
+    })();
+  };
+
+  const aiMeta = () => {
+    const client = lmClientRef.current;
+    const space = activeSpace;
+    if (!client || !space) return;
+    void (async () => {
+      setLmBusy(true);
+      try {
+        const { updated } = await client.refreshMetadataAi(space.id);
+        Alert.alert(t('library.remote.title'), t('library.remote.aiMetaDone', { updated }));
+      } catch (err) {
+        console.warn('[library] remote ai metadata failed', err);
+        Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
+      } finally {
+        setLmBusy(false);
+      }
+    })();
+  };
+
+  const syncProgress = () => {
+    const client = lmClientRef.current;
+    const space = activeSpace;
+    if (!client || !space) return;
+    void (async () => {
+      setLmBusy(true);
+      try {
+        const summary = await syncSpaceProgress({
+          client,
+          locals: localBooks,
+          getProgress: (id) => services.progress.getProgress(id),
+          saveProgress: (p) => services.progress.saveProgress(p),
+        }, space.id, remoteBooks ?? []);
+        Alert.alert(t('library.remote.title'), t('library.remote.syncDone', { ...summary }));
+        await refresh();
+      } catch (err) {
+        console.warn('[library] remote progress sync failed', err);
+        Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
+      } finally {
+        setLmBusy(false);
+      }
+    })();
+  };
+
+  const remoteView = remoteRows();
 
   return (
     <View style={[styles.root, { backgroundColor: t0.background, paddingTop: insets.top }]}>
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
       <View style={styles.titleRow}>
-        <Text style={[styles.title, { color: t0.foreground }]}>{t('library.title')}</Text>
+        <Pressable
+          style={styles.titlePress}
+          onPress={openRemoteSheet}
+          accessibilityLabel={t('library.remote.title')}
+          accessibilityRole="button"
+          hitSlop={8}
+        >
+          <Text style={[styles.title, { color: t0.foreground }]}>{t('library.title')}</Text>
+          <Ionicons name="chevron-forward" size={22} color={t0.muted} />
+        </Pressable>
         <View style={styles.titleActions}>
           <Pressable
-            onPress={() => void refreshMeta()}
-            accessibilityLabel={t('library.refreshMeta')}
+            onPress={() => void exportLibrary()}
+            accessibilityLabel={t('library.exportAll')}
             accessibilityRole="button"
             hitSlop={12}
-            disabled={importing || refreshingMeta}
-            style={[styles.iconButton, { borderColor: t0.border, opacity: importing || refreshingMeta ? 0.4 : 1 }]}
+            disabled={importing}
+            style={[styles.iconButton, { borderColor: t0.border, opacity: importing ? 0.4 : 1 }]}
           >
-            <Ionicons name="sync-outline" size={20} color={t0.foreground} />
+            <Ionicons name="archive-outline" size={20} color={t0.foreground} />
           </Pressable>
           <Pressable
             onPress={() => setSeriesSheet(true)}
@@ -391,25 +503,18 @@ export function LibraryScreen() {
             <Ionicons name="close" size={22} color={t0.foreground} />
           </Pressable>
           <Text style={[styles.selectionCount, { color: t0.foreground }]}>{t('library.selected', { count: selection.size })}</Text>
-          <Pressable onPress={() => void bulkRefreshMeta()} hitSlop={8} disabled={refreshingMeta}>
-            <Text style={[styles.selectionRefresh, { color: t0.foreground, opacity: refreshingMeta ? 0.4 : 1 }]}>
-              {t('library.refreshSelected')}
-            </Text>
+          <Pressable onPress={() => void exportSelected()} accessibilityLabel={t('library.exportSelected')} accessibilityRole="button" hitSlop={8} style={styles.selectionAction}>
+            <Ionicons name="download-outline" size={22} color={t0.foreground} />
           </Pressable>
-          <Pressable onPress={() => void exportSelected()} hitSlop={8}>
-            <Text style={[styles.selectionRefresh, { color: t0.foreground }]}>{t('library.exportSelected')}</Text>
-          </Pressable>
-          <Pressable onPress={bulkDelete} hitSlop={8}>
-            <Text style={[styles.selectionDelete, { color: t0.danger }]}>{t('library.deleteSelected', { count: selection.size })}</Text>
+          <Pressable onPress={bulkDelete} accessibilityLabel={t('library.deleteSelected', { count: selection.size })} accessibilityRole="button" hitSlop={8} style={styles.selectionAction}>
+            <Ionicons name="trash-outline" size={22} color={t0.danger} />
           </Pressable>
         </View>
       ) : null}
-      {(importing || refreshingMeta) && progress ? (
+      {importing && progress ? (
         <View style={[styles.importBanner, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
           <Text style={[styles.importText, { color: t0.foreground }]}>
-            {importing
-              ? t('library.importing', { done: progress.done, total: progress.total })
-              : t('library.refreshingMeta', { done: progress.done, total: progress.total })}
+            {t('library.importing', { done: progress.done, total: progress.total })}
           </Text>
           <View style={styles.importTrack}>
             <View style={{ flex: progress.total > 0 ? progress.done / progress.total : 0, backgroundColor: t0.accent, borderRadius: 2 }} />
@@ -519,10 +624,6 @@ export function LibraryScreen() {
               <Ionicons name="create-outline" size={20} color={t0.foreground} />
               <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.edit')}</Text>
             </Pressable>
-            <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void syncWithKoreader(b); }}>
-              <Ionicons name="sync-outline" size={20} color={t0.foreground} />
-              <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.kosync')}</Text>
-            </Pressable>
             <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void exportBook(b); }}>
               <Ionicons name="save-outline" size={20} color={t0.foreground} />
               <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.exportBook')}</Text>
@@ -547,6 +648,98 @@ export function LibraryScreen() {
         </Pressable>
       </Modal>
 
+      <Modal visible={remoteSheet} transparent animationType="fade" onRequestClose={() => setRemoteSheet(false)}>
+        <Pressable style={styles.sheetBackdrop} onPress={() => setRemoteSheet(false)}>
+          <View
+            style={[styles.sheet, { backgroundColor: t0.chrome, paddingBottom: 16 + insets.bottom, maxHeight: win.height * 0.8 }]}
+            testID="remote-sheet"
+          >
+            <View style={styles.sheetHandle}>
+              <View style={[styles.sheetHandleBar, { backgroundColor: t0.border }]} />
+            </View>
+            {!lmPrefs ? (
+              <ActivityIndicator style={{ paddingVertical: 24 }} color={t0.muted} />
+            ) : lmPrefs.lmAccessToken === '' ? (
+              <>
+                <Text style={[styles.sheetTitle, { color: t0.foreground }]}>{t('library.remote.title')}</Text>
+                <Text style={[styles.remoteEmpty, { color: t0.muted }]}>{t('library.remote.needAccount')}</Text>
+                <Pressable style={styles.sheetRow} onPress={() => { setRemoteSheet(false); router.push('/settings'); }}>
+                  <Ionicons name="settings-outline" size={20} color={t0.foreground} />
+                  <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.remote.goSettings')}</Text>
+                </Pressable>
+              </>
+            ) : activeSpace ? (
+              <>
+                <Pressable style={styles.sheetRow} onPress={() => { setActiveSpace(null); setRemoteBooks(null); }} disabled={lmBusy}>
+                  <Ionicons name="arrow-back" size={20} color={t0.foreground} />
+                  <Text numberOfLines={1} style={[styles.sheetRowText, { color: t0.foreground }]}>{activeSpace.name}</Text>
+                </Pressable>
+                <Pressable style={styles.sheetRow} onPress={aiMeta} disabled={lmBusy}>
+                  <Ionicons name="sparkles-outline" size={20} color={t0.foreground} />
+                  <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.remote.aiMeta')}</Text>
+                </Pressable>
+                <Pressable style={styles.sheetRow} onPress={syncProgress} disabled={lmBusy}>
+                  <Ionicons name="sync-outline" size={20} color={t0.foreground} />
+                  <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.remote.syncProgress')}</Text>
+                </Pressable>
+                {lmBusy ? <ActivityIndicator style={{ paddingVertical: 8 }} color={t0.muted} /> : null}
+                <Text style={[styles.sheetSection, { color: t0.muted }]}>{t('library.remote.onServer', { count: remoteView.rows.length })}</Text>
+                <ScrollView keyboardShouldPersistTaps="handled" style={styles.sheetScroll}>
+                  {remoteView.rows.map(({ remote, local }) => (
+                    <View key={remote.id} style={styles.sheetRow}>
+                      {local ? (
+                        <Ionicons name="checkmark-circle" size={20} color={t0.accent} />
+                      ) : SUPPORTED_REMOTE_FORMATS.has(remote.format) ? (
+                        <Pressable onPress={() => downloadRemote(remote)} hitSlop={8} disabled={lmBusy} accessibilityRole="button" accessibilityLabel={`${t('library.remote.download')} ${remote.title}`}>
+                          <Ionicons name="cloud-download-outline" size={20} color={t0.accent} />
+                        </Pressable>
+                      ) : (
+                        <Ionicons name="book-outline" size={20} color={t0.muted} />
+                      )}
+                      <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>
+                        {remote.title}{remote.author ? ` — ${remote.author}` : ''}
+                      </Text>
+                    </View>
+                  ))}
+                </ScrollView>
+                {remoteView.uploadable.length > 0 ? (
+                  <>
+                    <Text style={[styles.sheetSection, { color: t0.muted }]}>{t('library.remote.notOnServer', { count: remoteView.uploadable.length })}</Text>
+                    <ScrollView keyboardShouldPersistTaps="handled" style={styles.sheetScroll}>
+                      {remoteView.uploadable.map((b) => (
+                        <View key={b.id} style={styles.sheetRow}>
+                          <Pressable onPress={() => uploadLocal(b)} hitSlop={8} disabled={lmBusy} accessibilityRole="button" accessibilityLabel={`${t('library.remote.upload')} ${b.title}`}>
+                            <Ionicons name="cloud-upload-outline" size={20} color={t0.accent} />
+                          </Pressable>
+                          <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>{b.title}</Text>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Text style={[styles.sheetTitle, { color: t0.foreground }]}>{t('library.remote.title')}</Text>
+                {lmSpaces === null ? (
+                  <ActivityIndicator style={{ paddingVertical: 24 }} color={t0.muted} />
+                ) : (
+                  <ScrollView keyboardShouldPersistTaps="handled" style={styles.sheetScroll}>
+                    {lmSpaces.map((s) => (
+                      <Pressable key={s.id} style={styles.sheetRow} onPress={() => enterSpace(s)}>
+                        <Ionicons name="server-outline" size={20} color={t0.foreground} />
+                        <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>{s.name}</Text>
+                        <Text style={[styles.seriesCount, { color: t0.muted }]}>{s.booksCount}</Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                )}
+              </>
+            )}
+          </View>
+        </Pressable>
+      </Modal>
+
       {outcomes && <ImportResultsSheet outcomes={outcomes} onClose={() => setOutcomes(null)} />}
 
       {editBook ? (
@@ -566,6 +759,7 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, marginBottom: 12 },
   titleActions: { flexDirection: 'row', gap: 8 },
   title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.5 },
+  titlePress: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   iconButton: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 42, marginBottom: 10 },
   searchInput: { flex: 1, fontSize: 15, paddingVertical: 0 },
@@ -583,8 +777,7 @@ const styles = StyleSheet.create({
     borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 44, marginBottom: 10,
   },
   selectionCount: { flex: 1, fontSize: 14, fontWeight: '700' },
-  selectionRefresh: { fontSize: 14, fontWeight: '700' },
-  selectionDelete: { fontSize: 14, fontWeight: '700' },
+  selectionAction: { paddingHorizontal: 4 },
   grid: { paddingBottom: 96, gap: 4 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingBottom: 60 },
   emptyGlyphWrap: { width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
@@ -602,6 +795,8 @@ const styles = StyleSheet.create({
   sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14 },
   sheetRowText: { fontSize: 15 },
   sheetRowMain: { flex: 1 },
+  sheetSection: { fontSize: 13, fontWeight: '700', marginTop: 8, marginBottom: 2 },
+  remoteEmpty: { fontSize: 14, paddingVertical: 12 },
   seriesEmpty: { fontSize: 14, paddingVertical: 12 },
   seriesCount: { fontSize: 14, fontWeight: '600' },
 });

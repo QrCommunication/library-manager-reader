@@ -1,4 +1,10 @@
-import { syncBookProgress, applyServerProgress, pushLocalProgress } from '../koreaderSyncService';
+import {
+  syncBookProgress,
+  applyServerProgress,
+  pushLocalProgress,
+  syncLibraryProgress,
+  type BookSyncDeps,
+} from '../koreaderSyncService';
 import type { KoSyncClient, KoSyncProgress } from '../koreaderSync';
 import type { ReadingProgress } from '../../../core/types';
 
@@ -100,5 +106,99 @@ describe('conflict resolution helpers', () => {
     const { deps, calls } = makeDeps({});
     await expect(pushLocalProgress(deps, 'digest-1', localProgress(0.35))).resolves.toBe(true);
     expect(calls).toContain('put:35.0:0.35');
+  });
+});
+
+describe('syncLibraryProgress', () => {
+  interface BookCase { server?: KoSyncProgress | null; local?: ReadingProgress | null; fail?: boolean }
+
+  const makeLibraryDeps = (cases: Record<string, BookCase>) => {
+    const calls: string[] = [];
+    const locals: Record<string, ReadingProgress | null> = {};
+    for (const [id, c] of Object.entries(cases)) locals[id] = c.local ?? null;
+    // books sync sequentially, so the book under the digest is the one whose
+    // readAt just started
+    let current = '';
+    const deps: BookSyncDeps = {
+      readAt: async (path: string, offset: number, length: number) => {
+        const id = path.replace(/^\/books\//, '').replace(/\.epub$/, '');
+        if (cases[id]?.fail) throw new Error('unreadable');
+        current = id;
+        return file.subarray(offset, Math.min(offset + length, file.length));
+      },
+      getProgress: async (bookId: string) => {
+        calls.push(`localGet:${bookId}`);
+        return locals[bookId] ?? null;
+      },
+      saveProgress: async (p: ReadingProgress) => {
+        calls.push(`save:${p.bookId}:${p.fraction}:${p.updatedAt}`);
+        locals[p.bookId] = p;
+      },
+      client: {
+        register: async () => 'created',
+        authorize: async () => true,
+        getProgress: async (digest: string) => {
+          calls.push(`get:${current}:${digest}`);
+          return cases[current]?.server ?? null;
+        },
+        updateProgress: async (_d, progress, percentage) => {
+          calls.push(`put:${current}:${progress}:${percentage}`);
+          return true;
+        },
+      },
+    };
+    return { calls, deps, locals };
+  };
+
+  const book = (id: string) => ({ id, filePath: `/books/${id}.epub` });
+
+  it('summarises pushed, pulled, in_sync and none across the library', async () => {
+    const { deps, calls } = makeLibraryDeps({
+      pushedBook: { local: localProgress(0.25) },
+      pulledBook: { server: serverProgress(0.5) },
+      sameBook: { server: serverProgress(0.4), local: localProgress(0.4) },
+      emptyBook: {},
+    });
+    const summary = await syncLibraryProgress(deps, ['pushedBook', 'pulledBook', 'sameBook', 'emptyBook'].map(book));
+    expect(summary).toEqual({ pushed: 1, pulled: 1, inSync: 1, none: 1, conflicts: 0, failed: 0 });
+    expect(calls).toContain('put:pushedBook:25.0:0.25');
+    expect(calls).toContain('save:pulledBook:0.5:1700000000000');
+  });
+
+  it('resolves a conflict newest-wins: a newer server position is pulled', async () => {
+    const { deps, calls } = makeLibraryDeps({
+      conflictBook: { server: serverProgress(0.8), local: { ...localProgress(0.2), updatedAt: 1690000000 } },
+    });
+    const summary = await syncLibraryProgress(deps, [book('conflictBook')]);
+    expect(summary).toEqual({ pushed: 0, pulled: 1, inSync: 0, none: 0, conflicts: 1, failed: 0 });
+    expect(calls).toContain('save:conflictBook:0.8:1700000000000');
+  });
+
+  it('resolves a conflict newest-wins: a newer local position is pushed', async () => {
+    const { deps, calls } = makeLibraryDeps({
+      conflictBook: { server: serverProgress(0.8), local: { ...localProgress(0.2), updatedAt: 1710000000000 } },
+    });
+    const summary = await syncLibraryProgress(deps, [book('conflictBook')]);
+    expect(summary).toEqual({ pushed: 1, pulled: 0, inSync: 0, none: 0, conflicts: 1, failed: 0 });
+    expect(calls).toContain('put:conflictBook:20.0:0.2');
+  });
+
+  it('prefers the local position on an exact timestamp tie', async () => {
+    const { deps, calls } = makeLibraryDeps({
+      tieBook: { server: serverProgress(0.8), local: { ...localProgress(0.2), updatedAt: 1700000000000 } },
+    });
+    const summary = await syncLibraryProgress(deps, [book('tieBook')]);
+    expect(summary).toEqual({ pushed: 1, pulled: 0, inSync: 0, none: 0, conflicts: 1, failed: 0 });
+    expect(calls).toContain('put:tieBook:20.0:0.2');
+  });
+
+  it('counts an unreadable file as failed and keeps syncing the rest', async () => {
+    const { deps, calls } = makeLibraryDeps({
+      brokenBook: { fail: true, local: localProgress(0.3) },
+      goodBook: { local: localProgress(0.6) },
+    });
+    const summary = await syncLibraryProgress(deps, [book('brokenBook'), book('goodBook')]);
+    expect(summary).toEqual({ pushed: 1, pulled: 0, inSync: 0, none: 0, conflicts: 0, failed: 1 });
+    expect(calls).toContain('put:goodBook:60.0:0.6');
   });
 });
