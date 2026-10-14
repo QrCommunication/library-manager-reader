@@ -5,8 +5,13 @@ import type {
 
 export const PROTOCOL_VERSION = 1;
 
+// resume carries the last reading position so the engine applies it INSIDE
+// view.init (foliate's lastLocation) — one navigation after the first render,
+// never racing app-issued commands
+export type ResumeTarget = { cfi?: string | null; fraction?: number } | null;
+
 export type AppToEngine =
-  | { type: 'openBook'; format: BookFormat; size: number }
+  | { type: 'openBook'; format: BookFormat; size: number; resume?: ResumeTarget }
   | { type: 'data'; seq: number; base64: string }
   | { type: 'dataEnd' }
   | { type: 'goTo'; target: string }
@@ -33,6 +38,9 @@ export type EngineToApp =
   | { type: 'engineReady'; protocolVersion: number }
   | { type: 'dataAck'; seq: number }
   | { type: 'bookLoaded'; toc: TocItem[]; metadata: EngineMetadataPayload }
+  // once per open, after init and the resume navigation completed: the app
+  // gates progress persistence on it (earlier relocates must not clobber)
+  | { type: 'resumeApplied' }
   | { type: 'progress'; cfi: string | null; fraction: number; sectionIndex: number | null }
   | { type: 'bookmarkCaptured'; target: string; fraction: number; excerpt: string }
   | { type: 'extractResult'; requestId: string; ok: true; metadata: EngineMetadataPayload; cbzBase64: string | null }
@@ -51,7 +59,7 @@ export type EngineToApp =
   | { type: 'openSettings' };
 
 export const ENGINE_TO_APP_TYPES: readonly EngineToApp['type'][] = [
-  'engineReady', 'dataAck', 'bookLoaded', 'progress', 'bookmarkCaptured', 'extractResult', 'engineError',
+  'engineReady', 'dataAck', 'bookLoaded', 'resumeApplied', 'progress', 'bookmarkCaptured', 'extractResult', 'engineError',
   'selectionChanged', 'searchResult', 'searchDone', 'ttsSentence', 'chromeToggle', 'openSettings',
 ];
 

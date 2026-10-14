@@ -372,6 +372,10 @@ let settings: ReaderSettings = {
 let assembler: ReturnType<typeof createChunkAssembler> | null = null;
 let pendingExtract: { requestId: string; format: OriginalFormat } | null = null;
 let openFormat: BookFormat = 'epub';
+// resume target carried by openBook: applied via view.init({lastLocation}) /
+// a serialized post-init goToFraction — foliate's sanctioned single navigation
+// after the first render, instead of a race-prone message burst from the app
+let openResume: { cfi?: string | null; fraction?: number } | null = null;
 
 // foliate's makeBook sniffs the format from file.name (isCBZ/isFB2 call
 // name.endsWith), so a nameless Blob crashes on every zip-based book
@@ -546,6 +550,7 @@ async function handle(msg: AppToEngine): Promise<void> {
     case 'openBook':
       assembler = createChunkAssembler(msg.size);
       openFormat = msg.format;
+      openResume = msg.resume ?? null;
       break;
     case 'extract': {
       assembler = createChunkAssembler(msg.size);
@@ -563,11 +568,29 @@ async function handle(msg: AppToEngine): Promise<void> {
         } else {
           try {
             await view.open(new File([result.bytes], fileNameFor(openFormat)));
-            // bookLoaded is sent by the module-level 'load' listener — which only
-            // fires once init() drives the first render (same as finishExtract)
-            await view.init({});
+            // resume rides INSIDE init for a cfi target: foliate's
+            // renderer.goTo(resolved) runs after the first render, in the same
+            // task as init — the app cannot interleave a navigation on top of it
+            const resume = openResume;
+            if (resume?.cfi) {
+              try {
+                await view.init({ lastLocation: resume.cfi });
+              } catch {
+                // stale/invalid cfi (file changed, section indices moved): fall
+                // back to a plain first render + fraction — never fail the open
+                await view.init({});
+                if (typeof resume.fraction === 'number') await view.goToFraction(resume.fraction);
+              }
+            } else {
+              await view.init({});
+              if (resume && typeof resume.fraction === 'number') await view.goToFraction(resume.fraction);
+            }
           }
           catch (err) { send({ type: 'engineError', code: 'open_failed', message: String(err) }); }
+          // sent once per open, AFTER init and the resume navigation: the app
+          // gates progress persistence on it (earlier relocates — the first
+          // render's fraction≈0 — must not clobber the stored row)
+          send({ type: 'resumeApplied' });
         }
       }
       break;
@@ -684,14 +707,22 @@ async function handle(msg: AppToEngine): Promise<void> {
 // invisible hang.
 const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'copySelection', 'addHighlight', 'removeHighlight', 'search', 'searchCancel', 'ttsStart', 'ttsNext']);
 
+// Strict FIFO: every message runs through a promise chain so navigation can
+// NEVER interleave with an in-flight open/init (the resume regression: the app
+// legitimately sends goTo right after bookLoaded, which the load listener
+// fires DURING view.init — a concurrent goTo was clobbered by init's own
+// positioning). Per-message failures still surface as one engineError and the
+// chain keeps flowing (no poisoned dispatcher).
+let dispatchTail = Promise.resolve();
+
 onAppMessage((msg) => {
-  void (async () => {
-    if (!documentLoaded && QUIET_UNTIL_LOADED.has(msg.type)) return;
-    try {
-      await handle(msg);
-    } catch (err) {
+  dispatchTail = dispatchTail
+    .then(() => {
+      if (!documentLoaded && QUIET_UNTIL_LOADED.has(msg.type)) return;
+      return handle(msg);
+    })
+    .catch((err) => {
       console.log('[engine] handler error', err);
       send({ type: 'engineError', code: 'unknown', message: String(err) });
-    }
-  })();
+    });
 });

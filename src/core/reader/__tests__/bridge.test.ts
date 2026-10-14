@@ -123,6 +123,34 @@ describe('v1.x subscriptions and commands', () => {
     expect(opens).toBe(1);
   });
 
+  it('forwards the resume target on openBook and notifies resumeApplied subscribers', async () => {
+    const transport = makeTransport([]);
+    const outbox: string[] = [];
+    const bridge = new ReaderBridge((raw) => outbox.push(raw), transport);
+    bridge.handleRaw(enc({ type: 'engineReady', protocolVersion: 1 }));
+    const resumed: boolean[] = [];
+    const off = bridge.onResumeApplied(() => resumed.push(true));
+    const opened = bridge.openBook({ format: 'epub', path: '/b.epub', size: 6, resume: { cfi: 'c7', fraction: 0.7 } });
+    await flush();
+    expect(JSON.parse(outbox[0]!)).toMatchObject({ type: 'openBook', resume: { cfi: 'c7', fraction: 0.7 } });
+    // no resume field emitted when none provided (wire stays minimal for older engines)
+    bridge.handleRaw(enc({ type: 'bookLoaded', toc: [], metadata: { title: 'T', author: null, language: null, publisher: null, identifier: null, coverJpegBase64: null } }));
+    await opened;
+    expect(resumed).toEqual([]);
+    bridge.handleRaw(enc({ type: 'resumeApplied' }));
+    expect(resumed).toEqual([true]);
+    off();
+    bridge.handleRaw(enc({ type: 'resumeApplied' }));
+    expect(resumed).toEqual([true]);
+    const bare = new ReaderBridge((raw) => outbox.push(raw), makeTransport([]));
+    bare.handleRaw(enc({ type: 'engineReady', protocolVersion: 1 }));
+    const bareOpened = bare.openBook({ format: 'epub', path: '/b.epub', size: 6 });
+    await flush();
+    bare.handleRaw(enc({ type: 'bookLoaded', toc: [], metadata: { title: 'T', author: null, language: null, publisher: null, identifier: null, coverJpegBase64: null } }));
+    await bareOpened;
+    expect(JSON.parse(outbox.at(-1)!)).not.toHaveProperty('resume');
+  });
+
   it('emits highlight, search and tts commands', () => {
     const { bridge, sent } = makeBridge();
     bridge.addHighlight('a1', 'cfi-9', 'green');
