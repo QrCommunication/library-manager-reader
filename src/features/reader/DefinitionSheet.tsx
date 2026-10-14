@@ -34,7 +34,7 @@ export function DefinitionSheet({ word, lang, initialMode, onClose }: {
     void (async () => {
       try {
         if (mode === 'define') {
-          const found = await lookup.define(word, lang);
+          const found = await lookup.define(word, lang, i18n.language);
           if (!cancelled) setSenses(found);
         } else {
           // 'auto' lets the server detect the source language when the book

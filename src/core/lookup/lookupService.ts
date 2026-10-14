@@ -17,7 +17,7 @@ export interface LookupDeps {
 }
 
 export interface LookupService {
-  define(word: string, lang: string | null): Promise<DefinitionSense[]>;
+  define(word: string, lang: string | null, uiLang?: string): Promise<DefinitionSense[]>;
   translate(text: string, source: string, target: string): Promise<string>;
 }
 
@@ -79,29 +79,87 @@ function parseDefinitions(json: Record<string, unknown>): DefinitionSense[] {
   return senses;
 }
 
+// Fallback parser for editions without the REST definition endpoint (all but
+// en answer 501): action=parse HTML works on every edition and every future UI
+// language. Sections are <h2> per language, POS in <h3>/<h4>, definitions in
+// <ol><li>; nested <ul>/<dl> (quotes, examples, derivations) are dropped
+// before li extraction so a gloss never swallows its citations. First language
+// section yielding definitions wins — the wiki's own language comes first.
+const MAX_SENSES = 8;
+const MAX_GLOSSES = 6;
+
+export function parseWiktionaryHtml(html: string): DefinitionSense[] {
+  let clean = html;
+  for (;;) {
+    const next = clean.replace(/<(ul|dl)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
+    if (next === clean) break;
+    clean = next;
+  }
+  for (const sec of [...clean.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>([\s\S]*?)(?=<h2\b|$)/g)]) {
+    const senses: DefinitionSense[] = [];
+    for (const h of [...sec[2]!.matchAll(/<h([34])\b[^>]*>([\s\S]*?)<\/h\1\s*>([\s\S]*?)(?=<h[34]\b|$)/gi)]) {
+      const pos = stripTags(h[2]!).replace(/\s+/g, ' ').trim() || null;
+      const glosses: string[] = [];
+      for (const ol of [...h[3]!.matchAll(/<ol\b[^>]*>([\s\S]*?)<\/ol\s*>/gi)]) {
+        for (const li of [...ol[1]!.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li\s*>/gi)]) {
+          const g = clampGloss(sanitizeHtml(li[1]!));
+          if (g.length > 1 && !glosses.includes(g)) glosses.push(g);
+          if (glosses.length >= MAX_GLOSSES) break;
+        }
+        if (glosses.length >= MAX_GLOSSES) break;
+      }
+      if (glosses.length > 0) senses.push({ pos, glosses });
+      if (senses.length >= MAX_SENSES) break;
+    }
+    if (senses.length > 0) return senses;
+  }
+  return [];
+}
+
+const parseHtmlBody = (json: unknown): DefinitionSense[] => {
+  const text = (json as { parse?: { text?: unknown } } | null)?.parse?.text;
+  return typeof text === 'string' ? parseWiktionaryHtml(text) : [];
+};
+
 export function createLookupService(deps: LookupDeps = {}): LookupService {
   const doFetch = deps.fetch ?? fetch;
   const translateConfig = deps.translateConfig ?? (async () => ({ url: 'https://libretranslate.com', apiKey: null as string | null }));
 
-  async function define(word: string, lang: string | null): Promise<DefinitionSense[]> {
-    const first = wiktionarySubdomain(lang);
-    const editions = [first, 'en', 'fr'].filter((v, i, a) => a.indexOf(v) === i);
-    for (const sub of editions) {
+  // Editions: UI language first (definitions in the reader's language), then
+  // the book language, then en. Each edition tries the REST definition endpoint
+  // (only en ships it) and falls back to the action=parse HTML, which works on
+  // every edition.
+  async function define(word: string, lang: string | null, uiLang?: string): Promise<DefinitionSense[]> {
+    const editions = [wiktionarySubdomain(uiLang ?? lang), wiktionarySubdomain(lang), 'en']
+      .filter((v, i, a) => a.indexOf(v) === i);
+    let hardError: string | null = null;
+    const trySource = async (url: string, parse: (json: unknown) => DefinitionSense[]): Promise<DefinitionSense[] | null> => {
       let res: Response;
       try {
-        res = await doFetch(`https://${sub}.wiktionary.org/api/rest_v1/page/definition/${encodeURIComponent(word)}`, { headers: { 'User-Agent': WIKTIONARY_UA } });
+        res = await doFetch(url, { headers: { 'User-Agent': WIKTIONARY_UA } });
       } catch {
         throw new LookupError('offline');
       }
-      if (res.status === 404) continue;
-      // 501 = this edition does not implement the definition endpoint at all
-      // (fr.wiktionary answers it for every word) — try the next edition
-      if (res.status === 501) continue;
-      if (!res.ok) throw new LookupError('service_error', `wiktionary ${sub}: HTTP ${res.status}`);
-      const json = (await res.json()) as Record<string, unknown>;
-      const senses = parseDefinitions(json);
-      if (senses.length > 0) return senses;
+      // 404 = word missing; 501 = REST endpoint not deployed on this edition
+      if (res.status === 404 || res.status === 501) return null;
+      if (!res.ok) {
+        hardError = `wiktionary: HTTP ${res.status} (${url})`;
+        return null;
+      }
+      const senses = parse(await res.json());
+      return senses.length > 0 ? senses : null;
+    };
+    for (const sub of editions) {
+      const w = encodeURIComponent(word);
+      const rest = await trySource(`https://${sub}.wiktionary.org/api/rest_v1/page/definition/${w}`, (j) => parseDefinitions(j as Record<string, unknown>));
+      if (rest) return rest;
+      const html = await trySource(
+        `https://${sub}.wiktionary.org/w/api.php?action=parse&format=json&formatversion=2&prop=text&page=${w}&redirects=1`,
+        parseHtmlBody,
+      );
+      if (html) return html;
     }
+    if (hardError) throw new LookupError('service_error', hardError);
     throw new LookupError('not_found', word);
   }
 
