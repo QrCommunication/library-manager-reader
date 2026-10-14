@@ -472,8 +472,14 @@ export function LibraryScreen() {
       await client.confirmLocalCopy(space.id, rb.id, {
         installationId, versionId: version.id, sha256: dl.sha256, sizeBytes: dl.sizeBytes,
       });
-      setLocalBooks(await services.books.listBooks({ sort: 'added' }));
+      const fresh = await services.books.listBooks({ sort: 'added' });
+      setLocalBooks(fresh);
       await refresh();
+      // remember the cloud identity so page-turns sync live from now on
+      const imported = matchRemoteBook(rb, fresh);
+      if (imported) {
+        await services.remoteSync.linkBook({ bookId: imported.id, spaceId: space.id, serverBookId: rb.id, versionId: version.id });
+      }
       return 'imported';
     } catch (err) {
       console.warn('[library] remote transfer failed', err);
@@ -573,12 +579,21 @@ export function LibraryScreen() {
           },
           bytes,
         );
-        if (outcome === 'ready') showToast(t('library.remote.uploadDone'));
-        else if (outcome === 'duplicate') showToast(t('library.remote.uploadDuplicate'), 'info');
+        if (outcome === 'ready') {
+          showToast(t('library.remote.uploadDone'));
+          const page = await client.listBooks(space.id);
+          setRemoteBooks(page.items);
+          setRemoteCursor(page.nextCursor);
+          // link the local book to its new cloud copy for live page-turn sync
+          const server = matchRemoteBook(book, page.items);
+          if (server) {
+            const version = await readyDetails(client, space.id, server.id);
+            if (version) {
+              await services.remoteSync.linkBook({ bookId: book.id, spaceId: space.id, serverBookId: server.id, versionId: version.id });
+            }
+          }
+        } else if (outcome === 'duplicate') showToast(t('library.remote.uploadDuplicate'), 'info');
         else void inform(t('library.remote.title'), outcome === 'timeout' ? t('library.remote.uploadTimeout') : t('library.remote.failed'));
-        const page = await client.listBooks(space.id);
-        setRemoteBooks(page.items);
-        setRemoteCursor(page.nextCursor);
       } catch (err) {
         console.warn('[library] remote upload failed', err);
         void inform(t('library.remote.title'), lmErrorMessage(err, t));
@@ -650,6 +665,9 @@ export function LibraryScreen() {
           saveProgress: (p) => services.progress.saveProgress(p),
           installationId,
           newOperationId: uuidV7,
+          onLink: (localId, remoteId, versionId) => {
+            void services.remoteSync.linkBook({ bookId: localId, spaceId: space.id, serverBookId: remoteId, versionId });
+          },
         }, space.id, remoteBooks ?? []);
         for (const conflict of summary.conflicts) {
           await resolveConflict(space.id, installationId, conflict);

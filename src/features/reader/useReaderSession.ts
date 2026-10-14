@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Appearance } from 'react-native';
 import { useServices, type AppServices } from '../../core/services';
 import { ReaderBridge, type SearchResultPayload, type SelectionPayload, type TtsSentencePayload } from '../../core/reader/bridge';
+import { pullReadingPosition, pushReadingPosition } from '../../core/remote/readingSync';
 import { createBase64BookTransport } from '../../core/reader/bookTransport';
 import { useReaderSettingsStore } from '../settings/readerSettingsStore';
 import { resolveTheme } from '../../core/types';
@@ -51,12 +52,20 @@ export function createDefaultDeps(bookId: string, services: AppServices): Reader
       return b ? { title: b.title, format: b.format, fileName: b.fileName, fileSize: b.fileSize } : null;
     },
     getProgress: async (id) => {
+      // cloud pull rides the session's own progress read: if the server holds a
+      // strictly newer position for this linked book, the open lands there
+      await pullReadingPosition(services, id);
       const p = await services.progress.getProgress(id);
       return p ? { cfi: p.cfi, fraction: p.fraction } : null;
     },
     fileExists: (fileName) => services.fs.exists(`${services.paths.booksDir}/${fileName}`),
     bookPath: (fileName) => `${services.paths.booksDir}/${fileName}`,
-    saveProgress: (p) => services.progress.saveProgress({ bookId, ...p, updatedAt: Date.now() }),
+    saveProgress: (p) => {
+      // journal + background push to library-manager.com when this book is
+      // cloud-linked; offline the op stays in SQLite until connectivity
+      void pushReadingPosition(services, bookId, { cfi: p.cfi, fraction: p.fraction });
+      return services.progress.saveProgress({ bookId, ...p, updatedAt: Date.now() });
+    },
     touchLastRead: () => services.books.touchLastRead(bookId, Date.now()),
     makeBridge: () => new ReaderBridge((raw) => bridgeTarget.current(raw), createBase64BookTransport(services.fs)),
   };

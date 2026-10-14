@@ -53,6 +53,8 @@ export interface LmSyncDeps {
   saveProgress(p: ReadingProgress): Promise<void>;
   installationId: string;
   newOperationId: () => string;
+  /** observed local↔server pairing (drives the live page-turn sync) */
+  onLink?(localId: string, remoteId: string, versionId: string): void;
 }
 
 async function readyVersionOf(deps: LmSyncDeps, spaceId: string, bookId: string): Promise<string | null> {
@@ -74,6 +76,7 @@ export async function syncSpaceProgress(
     try {
       const versionId = await readyVersionOf(deps, spaceId, rb.id);
       if (!versionId) { summary.none++; continue; }
+      deps.onLink?.(local.id, rb.id, versionId);
       const server = await deps.client.getProgress(spaceId, rb.id, versionId);
       const localProgress = await deps.getProgress(local.id);
       if (!server && !localProgress) { summary.none++; continue; }
