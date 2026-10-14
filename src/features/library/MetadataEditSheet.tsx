@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { KeyboardTypeOptions, Modal, Pressable, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
+import { KeyboardTypeOptions, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useColorScheme, useWindowDimensions } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useServices } from '../../core/services';
 import type { Book } from '../../core/types';
 import { themeTokens } from '../../theme/tokens';
+import { useKeyboardHeight } from './useKeyboardHeight';
 
 type Tokens = ReturnType<typeof themeTokens>;
 
@@ -43,6 +44,8 @@ export function MetadataEditSheet({ book, onClose, onSaved }: {
   const { t } = useTranslation();
   const { books } = useServices();
   const insets = useSafeAreaInsets();
+  const win = useWindowDimensions();
+  const kb = useKeyboardHeight();
   const t0 = themeTokens(useColorScheme() === 'dark' ? 'night' : 'day');
   const [title, setTitle] = useState(book.title);
   const [author, setAuthor] = useState(book.author ?? '');
@@ -81,30 +84,37 @@ export function MetadataEditSheet({ book, onClose, onSaved }: {
     <Modal transparent visible animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel={t('common.cancel')}>
         <Pressable
-          style={[styles.sheet, { backgroundColor: t0.chrome, paddingBottom: 16 + insets.bottom }]}
+          style={[styles.sheet, {
+            backgroundColor: t0.chrome,
+            paddingBottom: 16 + insets.bottom,
+            marginBottom: kb,
+            maxHeight: kb > 0 ? win.height - kb : undefined,
+          }]}
           testID="metadata-edit-sheet"
           onPress={(e) => e.stopPropagation()}
         >
           <Text style={[styles.title, { color: t0.foreground }]}>{t('library.editTitle')}</Text>
-          <Field label={t('library.fieldTitle')} value={title} onChange={setTitle} tokens={t0} />
-          <Field label={t('library.fieldAuthor')} value={author} onChange={setAuthor} tokens={t0} />
-          <Field label={t('library.fieldSeries')} value={series} onChange={setSeries} tokens={t0} />
-          {suggestions.length > 0 ? (
-            <View style={styles.chips}>
-              {suggestions.map((s) => (
-                <Pressable
-                  key={s}
-                  onPress={() => setSeries(s)}
-                  style={[styles.chip, { borderColor: t0.border }]}
-                  accessibilityRole="button"
-                  accessibilityLabel={s}
-                >
-                  <Text style={[styles.chipText, { color: t0.foreground }]}>{s}</Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
-          <Field label={t('library.fieldTome')} value={tome} onChange={setTome} tokens={t0} keyboard="decimal-pad" />
+          <ScrollView keyboardShouldPersistTaps="handled" style={styles.body} contentContainerStyle={styles.bodyContent}>
+            <Field label={t('library.fieldTitle')} value={title} onChange={setTitle} tokens={t0} />
+            <Field label={t('library.fieldAuthor')} value={author} onChange={setAuthor} tokens={t0} />
+            <Field label={t('library.fieldSeries')} value={series} onChange={setSeries} tokens={t0} />
+            {suggestions.length > 0 ? (
+              <View style={styles.chips}>
+                {suggestions.map((s) => (
+                  <Pressable
+                    key={s}
+                    onPress={() => setSeries(s)}
+                    style={[styles.chip, { borderColor: t0.border }]}
+                    accessibilityRole="button"
+                    accessibilityLabel={s}
+                  >
+                    <Text style={[styles.chipText, { color: t0.foreground }]}>{s}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+            <Field label={t('library.fieldTome')} value={tome} onChange={setTome} tokens={t0} keyboard="decimal-pad" />
+          </ScrollView>
           <View style={styles.footer}>
             <Pressable style={[styles.btn, { borderColor: t0.border }]} onPress={onClose} accessibilityRole="button" accessibilityLabel={t('common.cancel')}>
               <Text style={[styles.btnText, { color: t0.foreground }]}>{t('common.cancel')}</Text>
@@ -132,13 +142,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingTop: 16, gap: 12,
   },
   title: { fontSize: 16, fontWeight: '700' },
+  body: { flexGrow: 0, flexShrink: 1 },
+  bodyContent: { gap: 12, paddingTop: 12 },
   field: { gap: 4 },
   label: { fontSize: 13, fontWeight: '600' },
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, height: 42, fontSize: 15 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: -6 },
   chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, borderWidth: 1 },
   chipText: { fontSize: 13, fontWeight: '600' },
-  footer: { flexDirection: 'row', gap: 12, marginTop: 4 },
+  footer: { flexDirection: 'row', gap: 12, marginTop: 12 },
   btn: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 8, borderWidth: 1 },
   btnText: { fontSize: 15, fontWeight: '600' },
 });
