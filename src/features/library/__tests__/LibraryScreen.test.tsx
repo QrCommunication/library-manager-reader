@@ -50,6 +50,11 @@ describe('LibraryScreen', () => {
     await initI18n('fr');
   });
 
+  // the in-memory secure store is module-global: keep tests independent
+  beforeEach(() => {
+    (require('expo-secure-store').__store as Map<string, string>).clear();
+  });
+
   it('shows the empty state', async () => {
     const services = await makeServices();
     await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
@@ -71,19 +76,23 @@ describe('LibraryScreen', () => {
       services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
     await mk('Serveur');
     await mk('LocalOnly');
-    await services.settings.putUiPrefs({
-      ...(await services.settings.getUiPrefs()),
-      lmUsername: 'rony', lmAccessToken: 'tok', lmRefreshToken: 'rt', lmTokenExpiresAt: Date.now() + 3600_000,
-    });
+    // sign-in state lives in the (mocked) secure store, not in the prefs
+    const { LM_TOKEN_KEYS } = require('../../../core/remote/lmTokens');
+    const SecureStore = require('expo-secure-store');
+    await SecureStore.setItemAsync(LM_TOKEN_KEYS.access, 'tok');
+    await SecureStore.setItemAsync(LM_TOKEN_KEYS.refresh, 'rt');
+    await SecureStore.setItemAsync(LM_TOKEN_KEYS.expiresAt, String(Date.now() + 3600_000));
     const fetchMock = jest.fn(async (url: RequestInfo | URL) => {
       const u = String(url);
-      if (u.endsWith('/api/spaces')) {
-        return new Response(JSON.stringify([{ id: 's1', name: 'Perso', booksCount: 1 }]), { status: 200 });
+      if (u.endsWith('/api/v1/mobile/spaces')) {
+        return new Response(JSON.stringify([{ id: 's1', name: 'Perso', role: 'owner' }]), { status: 200 });
       }
-      if (u.endsWith('/api/spaces/s1/books')) {
-        return new Response(JSON.stringify([
-          { id: 'rb1', title: 'Serveur', author: null, series: null, seriesIndex: null, format: 'epub', fileSize: 10, updatedAt: 5 },
-        ]), { status: 200 });
+      if (u.includes('/api/v1/mobile/spaces/s1/books?')) {
+        return new Response(JSON.stringify({
+          items: [{ id: 'rb1', title: 'Serveur', author: null, series: null, seriesIndex: null, updatedAt: 5 }],
+          nextCursor: null,
+          total: 1,
+        }), { status: 200 });
       }
       return new Response('nope', { status: 404 });
     });
@@ -98,7 +107,8 @@ describe('LibraryScreen', () => {
       // the unmatched local book lands in the upload section
       expect(await screen.findByText('Locaux absents du serveur (1)')).toBeOnTheScreen();
       expect(screen.getByLabelText('Envoyer LocalOnly')).toBeOnTheScreen();
-      expect(screen.getByText('Mettre à jour les métadonnées (IA)')).toBeOnTheScreen();
+      // the mobile API has no AI metadata endpoint: the action is gone
+      expect(screen.queryByText('Mettre à jour les métadonnées (IA)')).toBeNull();
       expect(screen.getByText('Synchroniser l’avancement')).toBeOnTheScreen();
     } finally {
       fetchSpy.mockRestore();

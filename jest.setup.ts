@@ -14,3 +14,17 @@ jest.mock('react-native-safe-area-context', () => {
     },
   };
 });
+
+// Keychain/Keystore stand-in: the real module is native-only, so screens under
+// test get a deterministic in-memory secure store. Per-file mocks (core tests)
+// override this one.
+jest.mock('expo-secure-store', () => {
+  const store = new Map<string, string>();
+  return {
+    __esModule: true,
+    getItemAsync: async (key: string) => store.get(key) ?? null,
+    setItemAsync: async (key: string, value: string) => { store.set(key, value); },
+    deleteItemAsync: async (key: string) => { store.delete(key); },
+    __store: store,
+  };
+});

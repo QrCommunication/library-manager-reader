@@ -11,12 +11,26 @@ export default {
     splash: { image: './assets/splash-icon.png', backgroundColor: '#17263d', resizeMode: 'contain' },
     scheme: 'lmr',
     userInterfaceStyle: 'automatic',
-    ios: { bundleIdentifier: 'com.librarymanager.reader', supportsTablet: true },
+    ios: {
+      bundleIdentifier: 'com.librarymanager.reader',
+      supportsTablet: true,
+      // OAuth callback https://library-manager.com/mobile/callback arrives via
+      // Universal Links (the association file lives on the server side)
+      associatedDomains: ['applinks:library-manager.com'],
+    },
     android: {
       package: 'com.librarymanager.reader',
       // Google Play versionCode: app version without dots (0.2.3 -> 023)
       versionCode: 23,
       adaptiveIcon: { foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#17263d' },
+      intentFilters: [
+        {
+          action: 'VIEW',
+          autoVerify: true,
+          data: [{ scheme: 'https', host: 'library-manager.com', pathPrefix: '/mobile/callback' }],
+          category: ['BROWSABLE', 'DEFAULT'],
+        },
+      ],
     },
     plugins: ['expo-router'],
     experiments: { typedRoutes: true },
