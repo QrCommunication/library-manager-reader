@@ -20,9 +20,22 @@ describe('lookupService.define', () => {
     const service = createLookupService({ fetch: fetched as unknown as typeof fetch });
     const senses = await service.define('book', 'en');
     expect(senses).toEqual([{ pos: 'Noun', glosses: ['A book & its pages', `${'x'.repeat(299)}…`] }]);
-    expect(fetched).toHaveBeenCalledWith(
+    expect((fetched.mock.calls[0] as unknown as [string])[0]).toBe(
       'https://en.wiktionary.org/api/rest_v1/page/definition/book',
     );
+  });
+
+  it('sends a compliant User-Agent (Wikimedia 403s the default okhttp UA on device)', async () => {
+    const fetched = fetchOk(200, {
+      English: [{ partOfSpeech: 'Noun', definitions: [{ definition: 'a book' }] }],
+    });
+    const service = createLookupService({ fetch: fetched as unknown as typeof fetch });
+    await service.define('book', 'en');
+    const [, init] = fetched.mock.calls[0] as unknown as [string, RequestInit];
+    const ua = (init?.headers as Record<string, string>)['User-Agent'];
+    expect(typeof ua).toBe('string');
+    expect(ua).toContain('LibraryManagerReader');
+    expect(ua).not.toMatch(/okhttp/i);
   });
 
   it('falls through the edition chain [lang, en, fr] and dedupes', async () => {
