@@ -8,7 +8,7 @@ import { resolveTheme } from '../../core/types';
 import type { BookFormat, HighlightColor, ReaderSettings, TocItem } from '../../core/types';
 
 export interface BridgeLike {
-  openBook(a: { format: BookFormat; path: string; size: number }): Promise<{ toc: TocItem[]; metadata: unknown }>;
+  openBook(a: { format: BookFormat; path: string; size: number; resume?: { cfi?: string | null; fraction?: number } | null }): Promise<{ toc: TocItem[]; metadata: unknown }>;
   goTo(t: string): void;
   goToFraction(f: number): void;
   next(): void;
@@ -16,6 +16,7 @@ export interface BridgeLike {
   applySettings(s: ReaderSettings): void;
   onProgress(cb: (p: { cfi: string | null; fraction: number; sectionIndex: number | null }) => void): () => void;
   onEngineError(cb: (e: { code: string; message: string }) => void): () => void;
+  onResumeApplied(cb: () => void): () => void;
   whenReady(): Promise<number>;
   addHighlight(id: string, cfi: string, color: HighlightColor): void;
   removeHighlight(id: string): void;
@@ -118,6 +119,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
     const deps = depsOverride ?? defaultDeps;
     if (!deps) return;
     let offProgress: (() => void) | undefined;
+    let offResume: (() => void) | undefined;
     let lastSave = 0;
     let latest: { cfi: string | null; fraction: number; sectionIndex: number | null } | null = null;
     void (async () => {
@@ -128,7 +130,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
       }
       const bridge = deps.makeBridge();
       setBridge(bridge);
-      // persistence gate: closed until the resume navigation has been issued.
+      // persistence gate: closed until the engine confirms the resume applied.
       // foliate emits a relocate (fraction≈0) right after load; without the gate
       // that first event would save fraction≈0 over the stored row AND seed
       // lastKnownRef with book-start, forcing the resume back to the beginning.
@@ -142,8 +144,17 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
         if (Date.now() - lastSave > 1000) { lastSave = Date.now(); void deps.saveProgress({ cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex }); void deps.touchLastRead(); }
       });
       bridge.onEngineError(() => { if (!cancelled) { setErrorKind('open_failed'); setState('error'); } });
+      const offResume = bridge.onResumeApplied(() => { resumed = true; });
       try {
-        const loaded = await bridge.openBook({ format: book.format, path: deps.bookPath(book.fileName), size: book.fileSize });
+        // resume travels INSIDE openBook: the engine applies it via
+        // view.init({lastLocation}) after the first render — one navigation in
+        // the same task as init, immune to the old post-open goTo race
+        const prog = await deps.getProgress(bookId);
+        const lastKnown = lastKnownRef.current?.bookId === bookId ? lastKnownRef.current : null;
+        const resume = lastKnown
+          ? { cfi: lastKnown.cfi, fraction: lastKnown.fraction }
+          : prog ? { cfi: prog.cfi, fraction: prog.fraction } : null;
+        const loaded = await bridge.openBook({ format: book.format, path: deps.bookPath(book.fileName), size: book.fileSize, resume });
         // theme resolved BEFORE transmission: the engine only knows concrete
         // themes (its cssFor still defaults 'auto'→'day' defensively). The
         // scheme is read imperatively (not the hook) so the value is current at
@@ -154,14 +165,6 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
         const scheme = Appearance.getColorScheme();
         const systemScheme: 'light' | 'dark' | null = scheme === 'light' || scheme === 'dark' ? scheme : null;
         bridge.applySettings({ ...openSettings, theme: resolveTheme(openSettings.theme, systemScheme) });
-        const prog = await deps.getProgress(bookId);
-        const lastKnown = lastKnownRef.current?.bookId === bookId ? lastKnownRef.current : null;
-        if (lastKnown) {
-          if (lastKnown.cfi) bridge.goTo(lastKnown.cfi);
-          else bridge.goToFraction(lastKnown.fraction);
-        } else if (prog?.cfi) bridge.goTo(prog.cfi);
-        else if (prog) bridge.goToFraction(prog.fraction);
-        resumed = true;
         if (!cancelled) {
           setToc(loaded.toc);
           setTitle(book.title);
@@ -176,6 +179,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
     return () => {
       cancelled = true;
       offProgress?.();
+      offResume?.();
       if (latest) { void deps.saveProgress({ ...latest }); }
     };
   }, [bookId, nonce, defaultDeps, depsOverride]);

@@ -12,6 +12,12 @@ let bootMessages: EngineMsg[] = [];
 const mockOpened: unknown[] = [];
 const mockLoadListeners: ((e: unknown) => void)[] = [];
 let mockInitCalls = 0;
+// resume-in-init: init must receive {lastLocation} for a cfi resume, {} otherwise;
+// the ordered nav log exposes the init/goToFraction interleave regression
+const mockInitArgs: unknown[] = [];
+const mockNav: string[] = [];
+let mockInitGate: Promise<void> | null = null;
+let mockFailLocatedInit = false;
 // headless extraction must parse via makeBook (pure data), never via the renderer
 const mockMakeBook = jest.fn();
 // concentration live-toggle: the section doc the renderer reports + setStyles calls
@@ -51,14 +57,21 @@ jest.mock('foliate-js/view.js', () => ({
       for (const fn of [...mockLoadListeners]) fn({ detail: { doc: null, index: 0 } });
     }
     // real foliate: init() drives the first render that makes 'load' fire;
-    // open() alone never displays anything
-    async init(): Promise<void> { mockInitCalls++; }
+    // open() alone never displays anything. init({lastLocation}) applies the
+    // resume INSIDE init (foliate's renderer.goTo after first render)
+    async init(opts: unknown): Promise<void> {
+      mockInitCalls++;
+      mockInitArgs.push(opts);
+      mockNav.push('init');
+      if (mockFailLocatedInit && (opts as { lastLocation?: string } | null)?.lastLocation) throw new Error('bad lastLocation');
+      if (mockInitGate) await mockInitGate;
+    }
     // foliate View delegates page turns to its renderer; the tap-zone clicks
     // call these on the view itself
     async next(): Promise<void> {}
     async prev(): Promise<void> {}
-    goTo(): void { throw new Error('goTo on unloaded book'); }
-    goToFraction(): void { throw new Error('goToFraction on unloaded book'); }
+    async goTo(target: string): Promise<void> { mockNav.push(`goTo:${target}`); }
+    async goToFraction(f: number): Promise<void> { mockNav.push(`goToFraction:${f}`); }
   },
   makeBook: mockMakeBook,
 }));
@@ -249,6 +262,8 @@ describe('engine opens visible-reader payloads as named Files (foliate sniffs fo
     posted = [];
     mockOpened.length = 0;
     mockInitCalls = 0;
+    mockInitArgs.length = 0;
+    mockNav.length = 0;
     mockMakeBook.mockReset();
     // esbuild define absent under jest: provide the base64 global the engine reads
     (globalThis as Record<string, unknown>).__UNRAR_WASM_B64__ = 'QQ==';
@@ -262,6 +277,74 @@ describe('engine opens visible-reader payloads as named Files (foliate sniffs fo
     expect(mockOpened[0]).toBeInstanceOf(File);
     expect((mockOpened[0] as File).name).toBe('book.epub');
     expect(mockInitCalls).toBe(1);
+  });
+
+  it('without a resume target, init runs without a location argument', async () => {
+    feed({ type: 'openBook', format: 'epub', size: 1 });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    expect(mockInitArgs).toEqual([{}]);
+    expect(mockNav).toEqual(['init']);
+  });
+});
+
+describe('resume position + serialized dispatch (reopen must restore the last position)', () => {
+  beforeEach(() => {
+    posted = [];
+    mockOpened.length = 0;
+    mockInitCalls = 0;
+    mockInitArgs.length = 0;
+    mockNav.length = 0;
+    mockInitGate = null;
+    mockFailLocatedInit = false;
+    mockMakeBook.mockReset();
+    (globalThis as Record<string, unknown>).__UNRAR_WASM_B64__ = 'QQ==';
+  });
+
+  it('feeds the stored cfi to init as lastLocation (resume applied inside init)', async () => {
+    feed({ type: 'openBook', format: 'epub', size: 1, resume: { cfi: 'epubcfi(6/4!/4/10,x)', fraction: 0.7 } });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    expect(mockInitArgs).toEqual([{ lastLocation: 'epubcfi(6/4!/4/10,x)' }]);
+    expect(mockNav).toEqual(['init']);
+    expect(engineErrors()).toHaveLength(0);
+  });
+
+  it('applies a fraction-only resume after init completes', async () => {
+    feed({ type: 'openBook', format: 'epub', size: 1, resume: { cfi: null, fraction: 0.37 } });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    expect(mockInitArgs).toEqual([{}]);
+    expect(mockNav).toEqual(['init', 'goToFraction:0.37']);
+    expect(engineErrors()).toHaveLength(0);
+  });
+
+  it('falls back to a plain init + fraction when the stored cfi cannot be applied', async () => {
+    mockFailLocatedInit = true;
+    feed({ type: 'openBook', format: 'epub', size: 1, resume: { cfi: 'epubcfi(junk)', fraction: 0.2 } });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    expect(mockInitArgs).toEqual([{ lastLocation: 'epubcfi(junk)' }, {}]);
+    expect(mockNav).toEqual(['init', 'init', 'goToFraction:0.2']);
+    // the fallback is the recovery — a stale cfi must not fail the open
+    expect(engineErrors()).toHaveLength(0);
+  });
+
+  it('serializes dispatch: navigation sent during the open waits for init to finish (regression: resume clobbered by concurrent init)', async () => {
+    let release!: () => void;
+    mockInitGate = new Promise<void>((r) => { release = r; });
+    feed({ type: 'openBook', format: 'epub', size: 1 });
+    feed({ type: 'data', seq: 0, base64: 'QQ==' });
+    await flush();
+    expect(mockNav).toEqual(['init']); // init started, still held open
+    feed({ type: 'goToFraction', fraction: 0.42 });
+    await flush();
+    // concurrent dispatch would run goToFraction inside init and clobber the position
+    expect(mockNav).toEqual(['init']);
+    release();
+    await flush();
+    expect(mockNav).toEqual(['init', 'goToFraction:0.42']);
+    expect(engineErrors()).toHaveLength(0);
   });
 });
 

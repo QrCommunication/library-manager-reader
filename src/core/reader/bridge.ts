@@ -1,5 +1,5 @@
 import { parseMessage } from '../bridge/codec';
-import { PROTOCOL_VERSION, type AppToEngine, type EngineMetadataPayload, type EngineToApp } from '../bridge/protocol';
+import { PROTOCOL_VERSION, type AppToEngine, type EngineMetadataPayload, type EngineToApp, type ResumeTarget } from '../bridge/protocol';
 import type { BookFormat, HighlightColor, ReaderSettings, SelectionRect, TocItem } from '../types';
 import type { BookTransport } from './bookTransport';
 
@@ -21,6 +21,7 @@ export class ReaderBridge {
   private chromeToggleCbs = new Set<() => void>();
   private openSettingsCbs = new Set<() => void>();
   private bookLoadedWaiter: { resolve: (v: { toc: TocItem[]; metadata: EngineMetadataPayload }) => void; reject: (e: Error) => void } | null = null;
+  private resumeCbs = new Set<() => void>();
   private ackWaiters: ((seq: number) => void)[] = [];
   private lastAck = -1;
   private bookmarkWaiter: { resolve: (v: { target: string; fraction: number; excerpt: string }) => void; timer: ReturnType<typeof setTimeout> } | null = null;
@@ -51,6 +52,9 @@ export class ReaderBridge {
       case 'bookLoaded':
         this.bookLoadedWaiter?.resolve({ toc: msg.toc, metadata: msg.metadata });
         this.bookLoadedWaiter = null;
+        break;
+      case 'resumeApplied':
+        for (const cb of this.resumeCbs) cb();
         break;
       case 'progress':
         for (const cb of this.progressCbs) cb({ cfi: msg.cfi, fraction: msg.fraction, sectionIndex: msg.sectionIndex });
@@ -97,11 +101,11 @@ export class ReaderBridge {
     return new Promise((resolve) => this.ackWaiters.push(() => resolve()));
   }
 
-  async openBook(args: { format: BookFormat; path: string; size: number }): Promise<{ toc: TocItem[]; metadata: EngineMetadataPayload }> {
+  async openBook(args: { format: BookFormat; path: string; size: number; resume?: ResumeTarget }): Promise<{ toc: TocItem[]; metadata: EngineMetadataPayload }> {
     const v = await this.whenReady();
     if (v !== PROTOCOL_VERSION) throw new Error('engine protocol mismatch');
     this.lastAck = -1;
-    this.emit({ type: 'openBook', format: args.format, size: args.size });
+    this.emit({ type: 'openBook', format: args.format, size: args.size, ...(args.resume ? { resume: args.resume } : {}) });
     const done = new Promise<{ toc: TocItem[]; metadata: EngineMetadataPayload }>((resolve, reject) => {
       this.bookLoadedWaiter = { resolve, reject };
     });
@@ -140,6 +144,10 @@ export class ReaderBridge {
   onProgress(cb: (p: { cfi: string | null; fraction: number; sectionIndex: number | null }) => void): () => void {
     this.progressCbs.add(cb);
     return () => this.progressCbs.delete(cb);
+  }
+  onResumeApplied(cb: () => void): () => void {
+    this.resumeCbs.add(cb);
+    return () => this.resumeCbs.delete(cb);
   }
   onEngineError(cb: (e: { code: string; message: string }) => void): () => void {
     this.errorCbs.add(cb);
