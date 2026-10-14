@@ -15,6 +15,7 @@ import type { Book } from '../../core/types';
 import { themeTokens } from '../../theme/tokens';
 import { useWindowLayout } from '../../ui/windowClasses';
 import { BookGridItem } from './BookGridItem';
+import { RemoteBookGridItem } from './RemoteBookGridItem';
 import { ImportResultsSheet, type ImportOutcome } from './ImportResultsSheet';
 import { MetadataEditSheet } from './MetadataEditSheet';
 import { getHeadlessEngine } from '../../core/reader/headlessEngine';
@@ -77,6 +78,7 @@ export function LibraryScreen() {
   const [seriesSheet, setSeriesSheet] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [remoteSheet, setRemoteSheet] = useState(false);
+  const [lmConnected, setLmConnected] = useState(false);
   const [lmSpaces, setLmSpaces] = useState<LmSpace[] | null>(null);
   const [activeSpace, setActiveSpace] = useState<LmSpace | null>(null);
   const [remoteBooks, setRemoteBooks] = useState<LmBook[] | null>(null);
@@ -258,7 +260,9 @@ export function LibraryScreen() {
       setRemoteBooks(null);
       setRemoteCursor(null);
       try {
-        if (!(await lmIsConnected(lmAccount))) return;
+        const connected = await lmIsConnected(lmAccount);
+        setLmConnected(connected);
+        if (!connected) return;
         const client = await lmClientFromAccount(lmAccount);
         lmClientRef.current = client;
         setLmSpaces(await client.listSpaces());
@@ -316,15 +320,36 @@ export function LibraryScreen() {
   };
 
   // one-to-one match: the used set tracks local ids already claimed, so two
-  // remotes with the same title never steal each other's counterpart
-  const remoteRows = () => {
+  // remotes with the same title never steal each other's counterpart — the
+  // resulting id set drives the "already in the library" tile badges
+  const matchedRemoteIds = () => {
     const used = new Set<string>();
-    const rows = (remoteBooks ?? []).map((remote) => {
+    const matched = new Set<string>();
+    for (const remote of remoteBooks ?? []) {
       const local = matchRemoteBook(remote, localBooks, used);
-      if (local) used.add(local.id);
-      return { remote, local };
-    });
-    return { rows, uploadable: localBooks.filter((b) => !used.has(b.id) && UPLOAD_FORMATS.has(b.format)) };
+      if (local) {
+        used.add(local.id);
+        matched.add(remote.id);
+      }
+    }
+    return matched;
+  };
+
+  // long-press on a remote tile: confirm, then download+import+confirmLocalCopy
+  const askTransfer = (rb: LmBook) => {
+    Alert.alert(
+      t('library.remote.transfer'),
+      t('library.remote.transferAsk', { title: rb.title }),
+      [
+        { text: t('common.cancel') },
+        { text: t('library.remote.transferGo'), onPress: () => downloadRemote(rb) },
+      ],
+    );
+  };
+
+  const openMenu = (book: Book) => {
+    setMenuBook(book);
+    void lmIsConnected(lmAccount).then(setLmConnected);
   };
 
   // remote files land in a staging dir so runImport (extraction, dedup,
@@ -506,8 +531,6 @@ export function LibraryScreen() {
     })();
   };
 
-  const remoteView = remoteRows();
-
   return (
     <View style={[styles.root, { backgroundColor: t0.background, paddingTop: insets.top }]}>
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
@@ -631,7 +654,7 @@ export function LibraryScreen() {
               selected={selection.has(item.id)}
               progress={progressMap.get(item.id)}
               onPress={() => (selectionMode ? toggleSelect(item.id) : router.push(`/book/${item.id}`))}
-              onLongPress={() => (selectionMode ? toggleSelect(item.id) : setMenuBook(item))}
+              onLongPress={() => (selectionMode ? toggleSelect(item.id) : openMenu(item))}
             />
           )}
         />
@@ -703,6 +726,12 @@ export function LibraryScreen() {
               <Ionicons name="create-outline" size={20} color={t0.foreground} />
               <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.edit')}</Text>
             </Pressable>
+            {lmConnected && menuBook && UPLOAD_FORMATS.has(menuBook.format) ? (
+              <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); uploadLocal(b); }}>
+                <Ionicons name="cloud-upload-outline" size={20} color={t0.foreground} />
+                <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.upload')}</Text>
+              </Pressable>
+            ) : null}
             <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void exportBook(b); }}>
               <Ionicons name="save-outline" size={20} color={t0.foreground} />
               <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.exportBook')}</Text>
@@ -760,44 +789,24 @@ export function LibraryScreen() {
                   <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.remote.syncProgress')}</Text>
                 </Pressable>
                 {lmBusy ? <ActivityIndicator style={{ paddingVertical: 8 }} color={t0.muted} /> : null}
-                <Text style={[styles.sheetSection, { color: t0.muted }]}>{t('library.remote.onServer', { count: remoteView.rows.length })}</Text>
-                <ScrollView keyboardShouldPersistTaps="handled" style={styles.sheetScroll}>
-                  {remoteView.rows.map(({ remote, local }) => (
-                    <View key={remote.id} style={styles.sheetRow}>
-                      {local ? (
-                        <Ionicons name="checkmark-circle" size={20} color={t0.accent} />
-                      ) : (
-                        <Pressable onPress={() => downloadRemote(remote)} hitSlop={8} disabled={lmBusy} accessibilityRole="button" accessibilityLabel={`${t('library.remote.download')} ${remote.title}`}>
-                          <Ionicons name="cloud-download-outline" size={20} color={t0.accent} />
-                        </Pressable>
-                      )}
-                      <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>
-                        {remote.title}{remote.author ? ` — ${remote.author}` : ''}
-                      </Text>
-                    </View>
-                  ))}
-                  {remoteCursor ? (
-                    <Pressable style={styles.sheetRow} onPress={loadMoreRemote} disabled={lmBusy}>
-                      <Ionicons name="chevron-down" size={20} color={t0.foreground} />
-                      <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.remote.loadMore')}</Text>
-                    </Pressable>
-                  ) : null}
-                </ScrollView>
-                {remoteView.uploadable.length > 0 ? (
-                  <>
-                    <Text style={[styles.sheetSection, { color: t0.muted }]}>{t('library.remote.notOnServer', { count: remoteView.uploadable.length })}</Text>
-                    <ScrollView keyboardShouldPersistTaps="handled" style={styles.sheetScroll}>
-                      {remoteView.uploadable.map((b) => (
-                        <View key={b.id} style={styles.sheetRow}>
-                          <Pressable onPress={() => uploadLocal(b)} hitSlop={8} disabled={lmBusy} accessibilityRole="button" accessibilityLabel={`${t('library.remote.upload')} ${b.title}`}>
-                            <Ionicons name="cloud-upload-outline" size={20} color={t0.accent} />
-                          </Pressable>
-                          <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>{b.title}</Text>
-                        </View>
-                      ))}
-                    </ScrollView>
-                  </>
-                ) : null}
+                <Text style={[styles.sheetSection, { color: t0.muted }]}>{t('library.remote.onServer', { count: (remoteBooks ?? []).length })}</Text>
+                <FlatList
+                  data={remoteBooks ?? []}
+                  // key remount on column change, same rule as the library grid
+                  key={`remote-grid-${columns}`}
+                  numColumns={columns}
+                  keyExtractor={(b) => b.id}
+                  onEndReached={remoteCursor ? loadMoreRemote : undefined}
+                  onEndReachedThreshold={0.5}
+                  style={styles.sheetScroll}
+                  renderItem={({ item }) => (
+                    <RemoteBookGridItem
+                      book={item}
+                      inLibrary={matchedRemoteIds().has(item.id)}
+                      onLongPress={() => askTransfer(item)}
+                    />
+                  )}
+                />
               </>
             ) : (
               <>
