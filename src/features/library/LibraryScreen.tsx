@@ -25,9 +25,6 @@ import { storedFormat } from '../../core/library/fileMeta';
 import { saveBytesToUserDir, EXPORT_MIME } from '../../core/storage/saf';
 import { seedIfEmpty } from '../../dev/seed';
 import { parseSidecar, serializeSidecar } from '../../core/progress/koreaderSidecar';
-import { syncBookProgress, applyServerProgress, pushLocalProgress, type BookSyncDeps } from '../../core/progress/koreaderSyncService';
-import { KoSyncError, type KoSyncClient } from '../../core/progress/koreaderSync';
-import { isKoSyncConfigured, koSyncClientFromPrefs } from '../../core/progress/koSyncAccount';
 
 const SORTS: SortKey[] = ['recent', 'added', 'title', 'series'];
 
@@ -98,64 +95,6 @@ export function LibraryScreen() {
     await services.books.markDeleted(book.id, Date.now());
     setMenuBook(null);
     await refresh();
-  };
-
-  const kosyncDeps = (client: KoSyncClient): BookSyncDeps => ({
-    readAt: (path, offset, length) => services.fs.readRange(path, offset, length),
-    getProgress: (id) => services.progress.getProgress(id),
-    saveProgress: (p) => services.progress.saveProgress(p),
-    client,
-  });
-
-  const kosyncErrorMessage = (err: unknown): string => {
-    if (!(err instanceof KoSyncError)) return t('library.kosync.failed');
-    if (err.kind === 'network') return t('library.kosync.network');
-    if (err.kind === 'auth') return t('library.kosync.authFailed');
-    return t('library.kosync.failed');
-  };
-
-  const syncWithKoreader = async (book: Book) => {
-    const prefs = await services.settings.getUiPrefs();
-    if (!isKoSyncConfigured(prefs)) {
-      Alert.alert(t('library.menu.kosync'), t('library.kosync.needAccount'));
-      return;
-    }
-    try {
-      const client = await koSyncClientFromPrefs(services.settings);
-      const deps = kosyncDeps(client);
-      const result = await syncBookProgress(deps, book, services.paths.bookPath(book.id, book.format));
-      if (result.kind === 'pulled') await refresh();
-      if (result.kind === 'none') Alert.alert(t('library.menu.kosync'), t('library.kosync.none'));
-      else if (result.kind === 'in_sync') Alert.alert(t('library.menu.kosync'), t('library.kosync.inSync'));
-      else if (result.kind === 'pulled') Alert.alert(t('library.menu.kosync'), t('library.kosync.pulled'));
-      else if (result.kind === 'pushed') Alert.alert(t('library.menu.kosync'), t('library.kosync.pushed'));
-      else {
-        const pct = (f: number) => Math.round(f * 100);
-        Alert.alert(
-          t('library.kosync.conflictTitle'),
-          t('library.kosync.conflict', { server: pct(result.server), local: pct(result.local) }),
-          [
-            { text: t('common.cancel') },
-            {
-              text: t('library.kosync.useServer', { percent: pct(result.server) }),
-              onPress: () => void (async () => {
-                await applyServerProgress(deps, book.id, { percentage: result.server, timestamp: null });
-                await refresh();
-              })(),
-            },
-            {
-              text: t('library.kosync.useLocal', { percent: pct(result.local) }),
-              onPress: () => void (async () => {
-                const local = await services.progress.getProgress(book.id);
-                if (local) await pushLocalProgress(deps, result.digest, local);
-              })(),
-            },
-          ],
-        );
-      }
-    } catch (err) {
-      Alert.alert(t('library.menu.kosync'), kosyncErrorMessage(err));
-    }
   };
 
   const exportSidecar = async (book: Book) => {
@@ -518,10 +457,6 @@ export function LibraryScreen() {
             <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); setEditBook(b); }}>
               <Ionicons name="create-outline" size={20} color={t0.foreground} />
               <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.edit')}</Text>
-            </Pressable>
-            <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void syncWithKoreader(b); }}>
-              <Ionicons name="sync-outline" size={20} color={t0.foreground} />
-              <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.kosync')}</Text>
             </Pressable>
             <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void exportBook(b); }}>
               <Ionicons name="save-outline" size={20} color={t0.foreground} />

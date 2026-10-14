@@ -11,7 +11,9 @@ import { initI18n } from '../../i18n';
 import { themeTokens } from '../../theme/tokens';
 import { md5Hex } from '../../core/progress/partialMd5';
 import { createKoSyncClient, KoSyncError } from '../../core/progress/koreaderSync';
-import { KO_SYNC_DEVICE } from '../../core/progress/koSyncAccount';
+import { isKoSyncConfigured, koSyncClientFromPrefs, KO_SYNC_DEVICE } from '../../core/progress/koSyncAccount';
+import { syncLibraryProgress } from '../../core/progress/koreaderSyncService';
+import { lmLogin, LmError } from '../../core/remote/lmClient';
 import { uuidV7 } from '../../core/uuid';
 import { useUiPrefsStore } from './uiPrefsStore';
 import { useReaderSettingsStore } from './readerSettingsStore';
@@ -61,12 +63,26 @@ export function SettingsScreen() {
   const [koUsername, setKoUsername] = useState<string | null>(null);
   const [koPassword, setKoPassword] = useState('');
   const [koBusy, setKoBusy] = useState(false);
+  const [koSyncing, setKoSyncing] = useState(false);
+  const [lmUsername, setLmUsername] = useState<string | null>(null);
+  const [lmPassword, setLmPassword] = useState('');
+  const [lmBusy, setLmBusy] = useState(false);
   const server = koServer ?? prefs.koreaderServer;
   const username = koUsername ?? prefs.koreaderUsername;
+  const lmUser = lmUsername ?? prefs.lmUsername;
+  const lmConnected = prefs.lmAccessToken !== '';
+  const koConnected = isKoSyncConfigured(prefs);
 
   useEffect(() => {
     void useUiPrefsStore.getState().hydrate();
   }, []);
+
+  const koErrorMessage = (err: unknown): string => {
+    if (!(err instanceof KoSyncError)) return t('settings.koreader.error');
+    if (err.kind === 'network') return t('settings.koreader.network');
+    if (err.kind === 'auth') return t('settings.koreader.badCredentials');
+    return t('settings.koreader.error');
+  };
 
   const koConnect = async (mode: 'login' | 'create') => {
     const serverTrimmed = server.trim();
@@ -95,12 +111,73 @@ export function SettingsScreen() {
       setKoPassword('');
       Alert.alert(t('settings.koreader.title'), t(mode === 'create' ? 'settings.koreader.createOk' : 'settings.koreader.loginOk'));
     } catch (err) {
-      const msg = err instanceof KoSyncError && err.kind === 'network'
-        ? t('settings.koreader.network')
-        : t('settings.koreader.error');
-      Alert.alert(t('settings.koreader.title'), msg);
+      Alert.alert(t('settings.koreader.title'), koErrorMessage(err));
     } finally {
       setKoBusy(false);
+    }
+  };
+
+  const koSyncLibrary = async () => {
+    if (!koConnected) {
+      Alert.alert(t('settings.koreader.title'), t('settings.koreader.needAccount'));
+      return;
+    }
+    setKoSyncing(true);
+    try {
+      const client = await koSyncClientFromPrefs(services.settings);
+      const all = await services.books.listBooks({ sort: 'added' });
+      const summary = await syncLibraryProgress(
+        {
+          readAt: (path, offset, length) => services.fs.readRange(path, offset, length),
+          getProgress: (id) => services.progress.getProgress(id),
+          saveProgress: (p) => services.progress.saveProgress(p),
+          client,
+        },
+        all.map((b) => ({ id: b.id, filePath: services.paths.bookPath(b.id, b.format) })),
+      );
+      Alert.alert(
+        t('settings.koreader.syncTitle'),
+        t('settings.koreader.syncSummary', {
+          pushed: summary.pushed,
+          pulled: summary.pulled,
+          inSync: summary.inSync,
+          conflicts: summary.conflicts,
+          failed: summary.failed,
+        }),
+      );
+    } catch (err) {
+      Alert.alert(t('settings.koreader.title'), koErrorMessage(err));
+    } finally {
+      setKoSyncing(false);
+    }
+  };
+
+  const lmConnect = async () => {
+    const usernameTrimmed = lmUser.trim();
+    if (!usernameTrimmed || !lmPassword) {
+      Alert.alert(t('settings.lm.title'), t('settings.lm.needFields'));
+      return;
+    }
+    setLmBusy(true);
+    try {
+      const tokens = await lmLogin({ username: usernameTrimmed, password: lmPassword });
+      await update({
+        lmUsername: usernameTrimmed,
+        lmAccessToken: tokens.accessToken,
+        lmRefreshToken: tokens.refreshToken,
+        lmTokenExpiresAt: tokens.expiresAt,
+      });
+      setLmPassword('');
+      Alert.alert(t('settings.lm.title'), t('settings.lm.loginOk'));
+    } catch (err) {
+      const msg = err instanceof LmError && err.kind === 'network'
+        ? t('settings.lm.network')
+        : err instanceof LmError && err.kind === 'auth'
+          ? t('settings.lm.badCredentials')
+          : t('settings.lm.error');
+      Alert.alert(t('settings.lm.title'), msg);
+    } finally {
+      setLmBusy(false);
     }
   };
 
@@ -114,6 +191,17 @@ export function SettingsScreen() {
 
   const version = Constants.expoConfig?.version ?? '—';
 
+  const statusRow = (connected: boolean, label: string) => (
+    <View style={styles.statusRow}>
+      <Ionicons
+        name={connected ? 'checkmark-circle' : 'ellipse-outline'}
+        size={16}
+        color={connected ? t0.accent : t0.muted}
+      />
+      <Text style={[styles.statusRowText, { color: connected ? t0.foreground : t0.muted }]}>{label}</Text>
+    </View>
+  );
+
   return (
     <ScrollView
       style={[styles.root, { backgroundColor: t0.background }]}
@@ -122,6 +210,7 @@ export function SettingsScreen() {
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
       <Text style={[styles.title, { color: t0.foreground }]}>{t('settings.title')}</Text>
 
+      <Text style={[styles.sectionTitle, { color: t0.foreground }]}>{t('settings.section.general')}</Text>
       {LANGUAGES.map((option) => {
         const active = prefs.language === option.value;
         return (
@@ -141,7 +230,6 @@ export function SettingsScreen() {
           </Pressable>
         );
       })}
-
       <View style={styles.themeRow}>
         {THEMES.map((option) => {
           const active = prefs.defaultTheme === option.value;
@@ -162,6 +250,7 @@ export function SettingsScreen() {
         })}
       </View>
 
+      <Text style={[styles.sectionTitle, { color: t0.foreground }]}>{t('settings.section.reading')}</Text>
       <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.translateTarget')}</Text>
       <View style={styles.targetRow}>
         {TRANSLATE_TARGETS.map((option) => {
@@ -182,8 +271,39 @@ export function SettingsScreen() {
         })}
       </View>
 
+      <Text style={[styles.sectionTitle, { color: t0.foreground }]}>{t('settings.lm.title')}</Text>
+      <Text style={[styles.sectionHint, { color: t0.muted }]}>{t('settings.lm.hint')}</Text>
+      {statusRow(lmConnected, lmConnected ? t('settings.lm.connected', { name: prefs.lmUsername }) : t('settings.lm.disconnected'))}
+      <TextInput
+        style={[styles.input, { borderColor: t0.border, color: t0.foreground }]}
+        placeholder={t('settings.lm.username')}
+        placeholderTextColor={t0.muted}
+        value={lmUser}
+        onChangeText={setLmUsername}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+      <TextInput
+        style={[styles.input, { borderColor: t0.border, color: t0.foreground }]}
+        placeholder={t('settings.lm.password')}
+        placeholderTextColor={t0.muted}
+        value={lmPassword}
+        onChangeText={setLmPassword}
+        autoCapitalize="none"
+        autoCorrect={false}
+        secureTextEntry
+      />
+      <Pressable
+        style={[styles.actionButton, { borderColor: t0.accent }, lmBusy && { opacity: 0.4 }]}
+        disabled={lmBusy}
+        onPress={() => { void lmConnect(); }}
+      >
+        <Text style={[styles.actionButtonText, { color: t0.accent }]}>{t('settings.lm.login')}</Text>
+      </Pressable>
+
       <Text style={[styles.sectionTitle, { color: t0.foreground }]}>{t('settings.koreader.title')}</Text>
       <Text style={[styles.sectionHint, { color: t0.muted }]}>{t('settings.koreader.hint')}</Text>
+      {statusRow(koConnected, koConnected ? t('settings.koreader.connected', { name: prefs.koreaderUsername }) : t('settings.koreader.disconnected'))}
       <TextInput
         style={[styles.input, { borderColor: t0.border, color: t0.foreground }]}
         placeholder={t('settings.koreader.server')}
@@ -229,6 +349,15 @@ export function SettingsScreen() {
           <Text style={[styles.actionButtonText, { color: t0.accent }]}>{t('settings.koreader.create')}</Text>
         </Pressable>
       </View>
+      <Pressable
+        style={[styles.syncButton, { backgroundColor: t0.accent }, (koSyncing || koBusy) && { opacity: 0.4 }]}
+        disabled={koSyncing || koBusy}
+        onPress={() => { void koSyncLibrary(); }}
+      >
+        <Text style={[styles.syncButtonText, { color: t0.onAccent }]}>
+          {koSyncing ? t('settings.koreader.syncing') : t('settings.koreader.sync')}
+        </Text>
+      </Pressable>
 
       <View style={[styles.infoRow, { borderColor: t0.border }]}>
         <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.storage')}</Text>
@@ -266,4 +395,8 @@ const styles = StyleSheet.create({
   buttonRow: { flexDirection: 'row', gap: 8 },
   actionButton: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
   actionButtonText: { fontSize: 14, fontWeight: '600' },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  statusRowText: { fontSize: 14 },
+  syncButton: { alignItems: 'center', paddingVertical: 12, borderRadius: 10 },
+  syncButtonText: { fontSize: 14, fontWeight: '600' },
 });
