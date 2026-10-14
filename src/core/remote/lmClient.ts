@@ -26,6 +26,12 @@ export class LmError extends Error {
 const OAUTH_TOKEN_PATH = '/api/mobile/oauth/token';
 const OAUTH_REVOKE_PATH = '/api/mobile/oauth/revoke';
 
+// the server's CSRF layer treats Origin-less POSTs as cross-site (403); a
+// first-party native client announces its own origin like a browser would
+const originOf = (baseUrl: string): string => {
+  try { return new URL(baseUrl).origin; } catch { return baseUrl; }
+};
+
 const tokenRequest = async (
   body: URLSearchParams,
   fetchImpl: typeof fetch,
@@ -35,7 +41,7 @@ const tokenRequest = async (
   try {
     res = await fetchImpl(`${baseUrl}${OAUTH_TOKEN_PATH}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: originOf(baseUrl) },
       body: body.toString(),
     });
   } catch (err) {
@@ -96,7 +102,7 @@ export const lmRevoke = async (
   try {
     await fetchImpl(`${baseUrl}${OAUTH_REVOKE_PATH}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: originOf(baseUrl) },
       body: new URLSearchParams({
         client_id: LM_CLIENT_ID,
         token: grant.refreshToken,
