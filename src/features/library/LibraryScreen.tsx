@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme, useWindowDimensions } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -28,6 +28,7 @@ export function LibraryScreen() {
   const services = useServices();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const win = useWindowDimensions();
   // app chrome follows the system light/dark; the reader surface has its own theme
   const dark = useColorScheme() === 'dark';
   const t0 = themeTokens(dark ? 'night' : 'day');
@@ -229,28 +230,6 @@ export function LibraryScreen() {
           </Pressable>
         ))}
       </View>
-      {seriesList.length > 0 ? (
-        // horizontal chips: tap filters the grid to that series, tap again clears
-        <View style={styles.seriesRow}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.seriesRowContent}>
-            {seriesList.map((s) => (
-              <Pressable
-                key={s.name}
-                onPress={() => setSeriesFilter((cur) => (cur === s.name ? null : s.name))}
-                style={[
-                  styles.sortChip,
-                  { borderColor: t0.border },
-                  seriesFilter === s.name && { backgroundColor: t0.accent, borderColor: t0.accent },
-                ]}
-              >
-                <Text style={[styles.sortChipText, { color: seriesFilter === s.name ? t0.onAccent : t0.foreground }]}>
-                  {`${s.name} (${s.count})`}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      ) : null}
       {selectionMode ? (
         <View style={[styles.selectionBar, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
           <Pressable onPress={() => setSelection(new Set())} accessibilityLabel={t('library.exitSelection')} hitSlop={8}>
@@ -326,26 +305,38 @@ export function LibraryScreen() {
 
       <Modal visible={seriesSheet} transparent animationType="fade" onRequestClose={() => setSeriesSheet(false)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setSeriesSheet(false)}>
-          <View style={[styles.sheet, { backgroundColor: t0.chrome, paddingBottom: 16 + insets.bottom }]} testID="series-sheet">
+          <View
+            style={[styles.sheet, { backgroundColor: t0.chrome, paddingBottom: 16 + insets.bottom, maxHeight: win.height * 0.7 }]}
+            testID="series-sheet"
+          >
             <View style={styles.sheetHandle}>
               <View style={[styles.sheetHandleBar, { backgroundColor: t0.border }]} />
             </View>
             <Text style={[styles.sheetTitle, { color: t0.foreground }]}>{t('library.series')}</Text>
-            {seriesList.length === 0 ? (
-              <Text style={[styles.seriesEmpty, { color: t0.muted }]}>{t('library.seriesEmpty')}</Text>
-            ) : (
-              seriesList.map((s) => (
-                <Pressable
-                  key={s.name}
-                  style={styles.sheetRow}
-                  onPress={() => { setSeriesFilter(s.name); setSeriesSheet(false); }}
-                >
-                  <Ionicons name="albums-outline" size={20} color={t0.foreground} />
-                  <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>{s.name}</Text>
-                  <Text style={[styles.seriesCount, { color: t0.muted }]}>{s.count}</Text>
-                </Pressable>
-              ))
-            )}
+            <ScrollView keyboardShouldPersistTaps="handled" style={styles.sheetScroll}>
+              {seriesList.length === 0 ? (
+                <Text style={[styles.seriesEmpty, { color: t0.muted }]}>{t('library.seriesEmpty')}</Text>
+              ) : (
+                seriesList.map((s) => {
+                  const active = seriesFilter === s.name;
+                  return (
+                    <Pressable
+                      key={s.name}
+                      style={styles.sheetRow}
+                      onPress={() => { setSeriesFilter(active ? null : s.name); setSeriesSheet(false); }}
+                    >
+                      <Ionicons
+                        name={active ? 'checkmark-circle' : 'albums-outline'}
+                        size={20}
+                        color={active ? t0.accent : t0.foreground}
+                      />
+                      <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>{s.name}</Text>
+                      <Text style={[styles.seriesCount, { color: t0.muted }]}>{s.count}</Text>
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
           </View>
         </Pressable>
       </Modal>
@@ -404,8 +395,6 @@ const styles = StyleSheet.create({
   search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 42, marginBottom: 10 },
   searchInput: { flex: 1, fontSize: 15, paddingVertical: 0 },
   sortRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
-  seriesRow: { marginBottom: 4 },
-  seriesRowContent: { flexDirection: 'row', gap: 8, paddingRight: 16 },
   importBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, height: 42, marginBottom: 10,
@@ -434,6 +423,7 @@ const styles = StyleSheet.create({
   sheetHandle: { alignItems: 'center', paddingVertical: 8 },
   sheetHandleBar: { width: 36, height: 4, borderRadius: 2 },
   sheetTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  sheetScroll: { flexGrow: 0 },
   sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14 },
   sheetRowText: { fontSize: 15 },
   sheetRowMain: { flex: 1 },
