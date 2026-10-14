@@ -38,32 +38,79 @@ describe('lookupService.define', () => {
     expect(ua).not.toMatch(/okhttp/i);
   });
 
+  const parseMissing = () => jsonResponse(200, { error: { code: 'missingtitle', info: 'missing' } });
+
+  it('uses the UI-language edition first, then book language, then en', async () => {
+    const fetched = jest.fn()
+      .mockResolvedValueOnce(jsonResponse(501, { status: 501 })) // fr REST (ui) — endpoint not deployed
+      .mockResolvedValueOnce(parseMissing())                     // fr HTML — page missing
+      .mockResolvedValueOnce(jsonResponse(200, {                 // en REST (book lang)
+        English: [{ partOfSpeech: 'Noun', definitions: [{ definition: 'to read' }] }],
+      }));
+    const service = createLookupService({ fetch: fetched as unknown as typeof fetch });
+    const senses = await service.define('read', 'en', 'fr');
+    expect(senses).toEqual([{ pos: 'Noun', glosses: ['to read'] }]);
+    expect((fetched.mock.calls[0] as unknown as [string])[0]).toContain('fr.wiktionary.org/api/rest_v1/page/definition/read');
+    expect((fetched.mock.calls[1] as unknown as [string])[0]).toContain('action=parse');
+    expect((fetched.mock.calls[1] as unknown as [string])[0]).toContain('fr.wiktionary.org');
+    expect((fetched.mock.calls[2] as unknown as [string])[0]).toContain('en.wiktionary.org/api/rest_v1');
+  });
+
+  it('parses French definitions from the action=parse HTML fallback (nested examples excluded)', async () => {
+    const html = '<div class="mw-heading mw-heading2"><h2 id="Français"><span id="Fran.C3.A7ais"></span>Français</h2></div>'
+      + '<div class="mw-heading mw-heading3"><h3 id="Nom_commun">Nom commun</h3></div>'
+      + '<ol><li><a href="/wiki/invention" title="invention">Invention</a> <a href="/wiki/fabuleux">fabuleuse</a>.'
+      + '<ul><li><span class="example"><q><i>exemple cité</i></q></span></li></ul></li>'
+      + '<li>Œuvre de l&#39;imagination.</li></ol>';
+    const fetched = jest.fn()
+      .mockResolvedValueOnce(jsonResponse(501, { status: 501 }))
+      .mockResolvedValueOnce(jsonResponse(200, { parse: { title: 'fiction', text: html } }));
+    const service = createLookupService({ fetch: fetched as unknown as typeof fetch });
+    const senses = await service.define('fiction', 'en', 'fr');
+    expect(senses).toEqual([{ pos: 'Nom commun', glosses: ['Invention fabuleuse.', "Œuvre de l'imagination."] }]);
+  });
+
+  it('maps exhausted chain (all editions, both sources) to not_found and hard HTTP errors to service_error', async () => {
+    const fetched = jest.fn()
+      .mockResolvedValueOnce(jsonResponse(501, { status: 501 }))
+      .mockResolvedValueOnce(parseMissing())
+      .mockResolvedValueOnce(jsonResponse(404, {}))
+      .mockResolvedValueOnce(parseMissing());
+    const service = createLookupService({ fetch: fetched as unknown as typeof fetch });
+    await expect(service.define('zzz', 'en', 'fr')).rejects.toMatchObject({ kind: 'not_found' });
+
+    const se = createLookupService({ fetch: fetchOk(500, {}) as unknown as typeof fetch });
+    await expect(se.define('word', 'en')).rejects.toMatchObject({ kind: 'service_error' });
+  });
+
   it('falls through the edition chain [lang, en, fr] and dedupes', async () => {
     const fetched = jest.fn()
       .mockResolvedValueOnce(jsonResponse(404, { error: 'Not found' }))
+      .mockResolvedValueOnce(parseMissing())
       .mockResolvedValueOnce(jsonResponse(200, {
         English: [{ partOfSpeech: 'Verb', definitions: [{ definition: 'to read' }] }],
       }));
     const service = createLookupService({ fetch: fetched as unknown as typeof fetch });
     const senses = await service.define('read', 'de');
     expect(senses).toEqual([{ pos: 'Verb', glosses: ['to read'] }]);
-    expect((fetched.mock.calls[0] as string[])[0]).toContain('de.wiktionary.org');
-    expect((fetched.mock.calls[1] as string[])[0]).toContain('en.wiktionary.org');
+    expect((fetched.mock.calls[0] as unknown as [string])[0]).toContain('de.wiktionary.org');
+    expect((fetched.mock.calls[2] as unknown as [string])[0]).toContain('en.wiktionary.org');
   });
 
   it('falls through a 501 edition (endpoint not deployed there, e.g. fr.wiktionary)', async () => {
     // fr.wiktionary answers 501 Not Implemented on the definition REST endpoint
-    // for every word — only some editions ship it
+    // for every word — only en ships it; the HTML fallback covers the rest
     const fetched = jest.fn()
       .mockResolvedValueOnce(jsonResponse(501, { error: 'Not implemented' }))
+      .mockResolvedValueOnce(parseMissing())
       .mockResolvedValueOnce(jsonResponse(200, {
         English: [{ partOfSpeech: 'Noun', definitions: [{ definition: 'a house' }] }],
       }));
     const service = createLookupService({ fetch: fetched as unknown as typeof fetch });
     const senses = await service.define('maison', 'fr');
     expect(senses).toEqual([{ pos: 'Noun', glosses: ['a house'] }]);
-    expect((fetched.mock.calls[0] as string[])[0]).toContain('fr.wiktionary.org');
-    expect((fetched.mock.calls[1] as string[])[0]).toContain('en.wiktionary.org');
+    expect((fetched.mock.calls[0] as unknown as [string])[0]).toContain('fr.wiktionary.org');
+    expect((fetched.mock.calls[2] as unknown as [string])[0]).toContain('en.wiktionary.org');
   });
 
   it('maps network rejection to offline', async () => {
