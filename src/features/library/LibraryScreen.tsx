@@ -27,10 +27,11 @@ import { seedIfEmpty } from '../../dev/seed';
 import { parseSidecar, serializeSidecar } from '../../core/progress/koreaderSidecar';
 import { createLmAccountDeps } from '../../core/storage/expoSecureStore';
 import { lmClientFromAccount, lmInstallationId, lmIsConnected } from '../../core/remote/lmAccount';
-import { LmError, type LmBook, type LmClient, type LmSpace } from '../../core/remote/lmClient';
+import { LmError, type LmBook, type LmBookDetails, type LmClient, type LmSpace, type LmVersion } from '../../core/remote/lmClient';
 import { applyServerProgress, matchRemoteBook, pushLocalChoice, syncSpaceProgress, type LmConflict } from '../../core/remote/lmSync';
 import { readyVersion, uploadBookFile } from '../../core/remote/lmTransfer';
 import { sha256HexOfBytes } from '../../core/remote/lmSha256';
+import { ensureCoverFile } from '../../core/remote/coverCache';
 import { uuidV7 } from '../../core/uuid';
 
 const SORTS: SortKey[] = ['recent', 'added', 'title', 'series'];
@@ -86,6 +87,8 @@ export function LibraryScreen() {
   const [localBooks, setLocalBooks] = useState<Book[]>([]);
   const [lmBusy, setLmBusy] = useState(false);
   const lmClientRef = useRef<LmClient | null>(null);
+  // per-sheet book details memo: covers and transfers share the getBook result
+  const detailsCache = useRef(new Map<string, LmBookDetails>());
   // tokens live in Keychain/Keystore (spec §10); prefs carry the display name only
   const lmAccount = useMemo(() => createLmAccountDeps(services.settings), [services]);
   const selectionMode = selection.size > 0;
@@ -280,6 +283,7 @@ export function LibraryScreen() {
     const client = lmClientRef.current;
     if (!client) return;
     setActiveSpace(space);
+    detailsCache.current.clear();
     void (async () => {
       setLmBusy(true);
       try {
@@ -352,6 +356,14 @@ export function LibraryScreen() {
     void lmIsConnected(lmAccount).then(setLmConnected);
   };
 
+  /** ready version of a server book, memoizing getBook across covers/transfers */
+  const readyDetails = async (client: LmClient, spaceId: string, bookId: string): Promise<LmVersion | null> => {
+    const cached = detailsCache.current.get(bookId);
+    const details = cached ?? await client.getBook(spaceId, bookId);
+    detailsCache.current.set(bookId, details);
+    return readyVersion(details.versions);
+  };
+
   // remote files land in a staging dir so runImport (extraction, dedup,
   // cover, canonical storage) runs on a plain file path, then gets cleaned up.
   // The download goes through the signed URL only — no Authorization header —
@@ -366,8 +378,7 @@ export function LibraryScreen() {
       const dir = `${services.paths.root}/remote-import`;
       let tmpPath: string | null = null;
       try {
-        const details = await client.getBook(space.id, rb.id);
-        const version = readyVersion(details.versions);
+        const version = await readyDetails(client, space.id, rb.id);
         if (!version) {
           Alert.alert(t('library.remote.title'), t('library.remote.noVersion'));
           return;
@@ -804,6 +815,28 @@ export function LibraryScreen() {
                       book={item}
                       inLibrary={matchedRemoteIds().has(item.id)}
                       onLongPress={() => askTransfer(item)}
+                      loadCover={() => {
+                        const client = lmClientRef.current;
+                        const sp = activeSpace;
+                        if (!client || !sp) return Promise.resolve(null);
+                        return (async () => {
+                          const version = await readyDetails(client, sp.id, item.id);
+                          if (!version) return null;
+                          return ensureCoverFile(
+                            {
+                              client,
+                              fs: services.fs,
+                              coverPaths: (vid) => ({
+                                bytes: `${services.paths.coversDir}/remote/${vid}-cover_v1.webp`,
+                                etag: `${services.paths.coversDir}/remote/${vid}-cover_v1.etag`,
+                              }),
+                            },
+                            sp.id,
+                            item.id,
+                            version.id,
+                          );
+                        })().catch(() => null);
+                      }}
                     />
                   )}
                 />

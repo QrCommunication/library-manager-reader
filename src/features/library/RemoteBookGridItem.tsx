@@ -1,23 +1,36 @@
 // Remote tile in the server-books grid: same visual language as the library
-// grid, minus the local cover (the mobile API exposes no cover endpoint) —
-// initials on the chrome background. The badge marks books already matched in
-// the local library; the long-press transfers the others.
+// grid. Cover comes from the on-disk cache via loadCover (the mobile API has
+// no cover URLs to hotlink); initials cover the loading/missing state. The
+// badge marks books already matched in the local library; the long-press
+// transfers the others.
 
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useColorScheme } from 'react-native';
 import type { LmBook } from '../../core/remote/lmClient';
 import { themeTokens } from '../../theme/tokens';
 
-export function RemoteBookGridItem({ book, inLibrary, onLongPress }: {
+export function RemoteBookGridItem({ book, inLibrary, onLongPress, loadCover }: {
   book: LmBook;
   inLibrary: boolean;
   onLongPress(): void;
+  /** resolves to a local file path once the cover is cached, null when there is none */
+  loadCover?: () => Promise<string | null>;
 }) {
   const { t } = useTranslation();
   const t0 = themeTokens(useColorScheme() === 'dark' ? 'night' : 'day');
+  const [coverUri, setCoverUri] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    loadCover?.()
+      .then((uri) => { if (alive && uri) setCoverUri(uri); })
+      .catch(() => { /* keep the initials */ });
+    return () => { alive = false; };
+    // the load is bound to the tile's mount, not to a changing closure
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const initials = book.title
     .split(/\s+/)
     .filter(Boolean)
@@ -32,7 +45,11 @@ export function RemoteBookGridItem({ book, inLibrary, onLongPress }: {
       accessibilityLabel={`${book.title}${book.author ? ` — ${book.author}` : ''}${inLibrary ? ` — ${t('library.remote.inLibrary')}` : ''}`}
     >
       <View style={[s.cover, { backgroundColor: t0.chrome }]}>
-        <Text style={[s.initials, { color: t0.muted }]}>{initials}</Text>
+        {coverUri ? (
+          <Image source={{ uri: coverUri }} style={s.image} resizeMode="cover" onError={() => setCoverUri(null)} />
+        ) : (
+          <Text style={[s.initials, { color: t0.muted }]}>{initials}</Text>
+        )}
         {inLibrary ? (
           <View style={s.badge}>
             <Ionicons name="checkmark-circle" size={22} color={t0.accent} />
@@ -56,6 +73,7 @@ export function RemoteBookGridItem({ book, inLibrary, onLongPress }: {
 const s = StyleSheet.create({
   cell: { flex: 1, margin: 6, alignItems: 'center' },
   cover: { width: '100%', aspectRatio: 0.7, borderRadius: 8, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  image: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   initials: { fontSize: 32, fontWeight: '800', letterSpacing: 1 },
   badge: { position: 'absolute', top: 6, left: 6 },
   tomeBadge: {
