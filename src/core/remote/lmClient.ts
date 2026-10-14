@@ -5,6 +5,7 @@
 // receive the account bearer.
 
 import { LM_CLIENT_ID, LM_REDIRECT_URI } from './lmPkce';
+import { sha256HexOfBytes } from './lmSha256';
 import type { LmTokens } from './lmTokens';
 
 export const LM_BASE_URL = 'https://library-manager.com';
@@ -124,6 +125,11 @@ export interface LmBook {
   updatedAt: number | null;
 }
 export interface LmVersion { id: string; format: string; status: string; sizeBytes: number; sha256: string }
+export type LmCover =
+  | { kind: 'ok'; bytes: Uint8Array; etag: string }
+  | { kind: 'unmodified' }
+  | { kind: 'none' };
+
 export interface LmBookDetails { id: string; title: string; author: string | null; versions: LmVersion[] }
 export interface LmPage<T> { items: T[]; nextCursor: string | null; total: number }
 export interface LmDownload {
@@ -165,7 +171,7 @@ interface BusinessErrorBody { error?: { code?: string; details?: unknown } }
 export class LmClient {
   constructor(private base: string, private token: string, private fetchImpl: typeof fetch) {}
 
-  private async call(path: string, init: RequestInit = {}): Promise<Response> {
+  private async call(path: string, init: RequestInit = {}, opts: { passThrough?: number[] } = {}): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${this.token}`);
     let res: Response;
@@ -175,6 +181,7 @@ export class LmClient {
       throw new LmError('network', err instanceof Error ? err.message : String(err));
     }
     if (res.ok) return res;
+    if (opts.passThrough?.includes(res.status)) return res;
     if (res.status === 401) throw new LmError('auth');
     let body: BusinessErrorBody = {};
     try { body = (await res.json()) as BusinessErrorBody; } catch { /* non-JSON error body */ }
@@ -254,6 +261,34 @@ export class LmClient {
 
   getImport(spaceId: string, importId: string): Promise<LmImportStatus> {
     return this.call(`/api/v1/mobile/spaces/${spaceId}/imports/${importId}`).then((r) => r.json());
+  }
+
+  /**
+   * Version-scoped cover (profile cover_v1) with conditional GET. On 200 the
+   * WebP bytes are verified against the ETag fingerprint (sha256, ≤ 512 KiB)
+   * before being published; 304 means the caller's stored bytes remain valid;
+   * 404 means pending or noCover — show the local placeholder.
+   */
+  async getCover(spaceId: string, bookId: string, versionId: string, storedEtag: string | null): Promise<LmCover> {
+    const headers: Record<string, string> = {};
+    if (storedEtag) headers['If-None-Match'] = storedEtag;
+    const res = await this.call(
+      `/api/v1/mobile/spaces/${spaceId}/books/${bookId}/versions/${versionId}/cover?profile=cover_v1`,
+      { headers },
+      { passThrough: [304, 404] },
+    );
+    if (res.status === 404) return { kind: 'none' };
+    if (res.status === 304) return { kind: 'unmodified' };
+    const etag = res.headers.get('etag');
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const length = Number(res.headers.get('content-length'));
+    if (res.headers.get('content-type') !== 'image/webp') throw new LmError('server', 'cover: bad content type');
+    if (!etag || !/^"sha256-[a-f0-9]{64}"$/.test(etag)) throw new LmError('server', 'cover: bad etag');
+    if (!Number.isSafeInteger(length) || length < 1 || length > 524288 || bytes.length !== length) {
+      throw new LmError('server', 'cover: bad length');
+    }
+    if (etag !== `"sha256-${await sha256HexOfBytes(bytes)}"`) throw new LmError('server', 'cover: hash mismatch');
+    return { kind: 'ok', bytes, etag };
   }
 
   /** no stored progress on the server → null */

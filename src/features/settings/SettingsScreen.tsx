@@ -232,6 +232,9 @@ export function SettingsScreen() {
     setLmBusy(true);
     try {
       await lmDisconnect(lmAccount);
+      // account isolation of the cover cache (spec: private, per-account) —
+      // remote thumbnails live in their own subtree, local covers are untouched
+      await services.fs.remove(`${services.paths.coversDir}/remote`).catch(() => {});
       setLmConnected(false);
     } catch (err) {
       Alert.alert(t('settings.lm.title'), lmErrorMessage(err));

@@ -2,6 +2,18 @@ import {
   createLmClient, lmExchangeCode, lmRefresh, lmRevoke, LmError, LM_BASE_URL,
 } from '../lmClient';
 
+// deterministic digest so cover integrity checks match node's sha256
+jest.mock('expo-crypto', () => ({
+  __esModule: true,
+  CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+  digest: async (_alg: string, data: BufferSource) => {
+    const { createHash } = require('node:crypto');
+    const hashed = createHash('sha256').update(new Uint8Array(data as ArrayBuffer)).digest();
+    return hashed.buffer.slice(hashed.byteOffset, hashed.byteOffset + hashed.byteLength);
+  },
+  getRandomValues: (arr: Uint8Array) => { require('node:crypto').webcrypto.getRandomValues(arr); return arr; },
+}));
+
 const okJson = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 
 const tokensJson = { access_token: 'at-1', refresh_token: 'rt-1', expires_in: 600, token_type: 'Bearer' };
@@ -50,6 +62,46 @@ describe('lmRefresh — rotating refresh_token grant', () => {
     expect(body).toContain('grant_type=refresh_token');
     expect(body).toContain('client_id=library-manager-mobile');
     expect(body).toContain('refresh_token=rt-1');
+  });
+});
+
+describe('lmCover — version-scoped cover with conditional GET and integrity', () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  const sha = require('node:crypto').createHash('sha256').update(bytes).digest('hex') as string;
+  const etag = `"sha256-${sha}"`;
+
+  const make = (status: number, headers: Record<string, string>, body?: BodyInit) =>
+    createLmClient({ accessToken: 't' }, (async () => new Response(body ?? null, { status, headers })) as unknown as typeof fetch);
+
+  it('returns verified bytes + etag on 200', async () => {
+    const client = make(200, { 'Content-Type': 'image/webp', ETag: etag, 'Content-Length': String(bytes.length) }, bytes.buffer);
+    await expect(client.getCover('s1', 'b1', 'v1', null)).resolves.toEqual({ kind: 'ok', bytes, etag });
+  });
+
+  it('sends the profile and the stored etag as If-None-Match; 304 → unmodified', async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const client = createLmClient({ accessToken: 't' }, (async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return new Response(null, { status: 304, headers: { ETag: etag } });
+    }) as unknown as typeof fetch);
+    await expect(client.getCover('s1', 'b1', 'v1', etag)).resolves.toEqual({ kind: 'unmodified' });
+    expect(calls[0]!.url).toBe(`${LM_BASE_URL}/api/v1/mobile/spaces/s1/books/b1/versions/v1/cover?profile=cover_v1`);
+    expect((calls[0]!.init.headers as Headers).get('If-None-Match')).toBe(etag);
+  });
+
+  it('maps 404 to none (pending or noCover)', async () => {
+    const client = make(404, { 'Content-Type': 'application/json' });
+    await expect(client.getCover('s1', 'b1', 'v1', null)).resolves.toEqual({ kind: 'none' });
+  });
+
+  it('rejects bytes whose hash does not match the etag', async () => {
+    const client = make(200, { 'Content-Type': 'image/webp', ETag: `"sha256-${'a'.repeat(64)}"`, 'Content-Length': String(bytes.length) }, bytes.buffer);
+    await expect(client.getCover('s1', 'b1', 'v1', null)).rejects.toMatchObject({ kind: 'server' });
+  });
+
+  it('rejects a non-webp content type', async () => {
+    const client = make(200, { 'Content-Type': 'image/jpeg', ETag: etag, 'Content-Length': String(bytes.length) }, bytes.buffer);
+    await expect(client.getCover('s1', 'b1', 'v1', null)).rejects.toMatchObject({ kind: 'server' });
   });
 });
 
