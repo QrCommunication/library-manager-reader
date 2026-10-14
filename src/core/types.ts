@@ -119,6 +119,13 @@ export interface UiPrefs {
   // LibreTranslate target code translations point at (one of the server's
   // supported languages, see SettingsScreen)
   translateTarget: string;
+  // KOSync account: community server by default, or any self-hosted one.
+  // Only the md5 of the password (userkey) is ever persisted, matching what
+  // KOReader itself stores in kosync.lua.
+  koreaderServer: string;
+  koreaderUsername: string;
+  koreaderUserkey: string;
+  koreaderDeviceId: string;
 }
 
 export const DEFAULT_UI_PREFS: UiPrefs = {
@@ -129,4 +136,8 @@ export const DEFAULT_UI_PREFS: UiPrefs = {
   libreTranslateUrl: 'https://translate.rlconseil.net',
   libreTranslateApiKey: '73d6bbf4-eaba-4bbf-ad82-d58f9ccba23d',
   translateTarget: 'fr',
+  koreaderServer: 'https://sync.koreader.rocks',
+  koreaderUsername: '',
+  koreaderUserkey: '',
+  koreaderDeviceId: '',
 };
