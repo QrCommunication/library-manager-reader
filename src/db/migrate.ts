@@ -1,6 +1,6 @@
 import type { DbDriver } from './driver';
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -62,6 +62,29 @@ const MIGRATIONS: Record<number, string> = {
   3: `
     ALTER TABLE books ADD COLUMN series TEXT;
     ALTER TABLE books ADD COLUMN series_index REAL;
+  `,
+  4: `
+    CREATE TABLE remote_books (
+      book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
+      space_id TEXT NOT NULL,
+      server_book_id TEXT NOT NULL,
+      version_id TEXT NOT NULL,
+      last_revision INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE progress_journal (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      space_id TEXT NOT NULL,
+      server_book_id TEXT NOT NULL,
+      version_id TEXT NOT NULL,
+      operation_id TEXT NOT NULL,
+      cfi TEXT,
+      chapter_id TEXT,
+      percent REAL NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX idx_progress_journal_book ON progress_journal(book_id, created_at);
   `,
 };
 

@@ -5,6 +5,7 @@ import { createProgressRepo } from '../db/progressRepo';
 import { createBookmarksRepo } from '../db/bookmarksRepo';
 import { createAnnotationsRepo } from '../db/annotationsRepo';
 import { createSettingsRepo } from '../db/settingsRepo';
+import { createRemoteSyncRepo } from '../db/remoteSyncRepo';
 import { createLookupService } from './lookup/lookupService';
 import type { FsAdapter } from './storage/fsAdapter';
 import { createStoragePaths, type StoragePaths } from './storage/paths';
@@ -15,6 +16,7 @@ export interface AppServices {
   bookmarks: ReturnType<typeof createBookmarksRepo>;
   annotations: ReturnType<typeof createAnnotationsRepo>;
   settings: ReturnType<typeof createSettingsRepo>;
+  remoteSync: ReturnType<typeof createRemoteSyncRepo>;
   lookup: ReturnType<typeof createLookupService>;
   fs: FsAdapter;
   paths: StoragePaths;
@@ -28,6 +30,7 @@ export function createServices(args: { db: DbDriver; fs: FsAdapter; root: string
     bookmarks: createBookmarksRepo(args.db, args.newId),
     annotations: createAnnotationsRepo(args.db, args.newId),
     settings: settingsRepo,
+    remoteSync: createRemoteSyncRepo(args.db),
     lookup: createLookupService({
       // read the persisted prefs on every call, so URL/key edits apply immediately
       translateConfig: async () => {
