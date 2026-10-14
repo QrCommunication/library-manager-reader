@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme, useWindowDimensions } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
@@ -11,7 +11,7 @@ import { useBooks, type SortKey } from './useBooks';
 import { runImport } from '../../core/import/importService';
 import { SUPPORTED_MIME } from '../../core/import/mime';
 import { formatBytes } from '../../core/format';
-import type { Book, UiPrefs } from '../../core/types';
+import type { Book } from '../../core/types';
 import { themeTokens } from '../../theme/tokens';
 import { useWindowLayout } from '../../ui/windowClasses';
 import { BookGridItem } from './BookGridItem';
@@ -24,13 +24,18 @@ import { storedFormat } from '../../core/library/fileMeta';
 import { saveBytesToUserDir, EXPORT_MIME } from '../../core/storage/saf';
 import { seedIfEmpty } from '../../dev/seed';
 import { parseSidecar, serializeSidecar } from '../../core/progress/koreaderSidecar';
-import { lmClientFromPrefs } from '../../core/remote/lmAccount';
+import { createLmAccountDeps } from '../../core/storage/expoSecureStore';
+import { lmClientFromAccount, lmInstallationId, lmIsConnected } from '../../core/remote/lmAccount';
 import { LmError, type LmBook, type LmClient, type LmSpace } from '../../core/remote/lmClient';
-import { matchRemoteBook, syncSpaceProgress } from '../../core/remote/lmSync';
+import { applyServerProgress, matchRemoteBook, pushLocalChoice, syncSpaceProgress, type LmConflict } from '../../core/remote/lmSync';
+import { readyVersion, uploadBookFile } from '../../core/remote/lmTransfer';
+import { sha256HexOfBytes } from '../../core/remote/lmSha256';
+import { uuidV7 } from '../../core/uuid';
 
 const SORTS: SortKey[] = ['recent', 'added', 'title', 'series'];
 
-const SUPPORTED_REMOTE_FORMATS = new Set(['epub', 'mobi', 'azw3', 'cbz', 'cbr']);
+// formats the mobile API accepts AND the reader can import
+const UPLOAD_FORMATS = new Set(['epub', 'mobi', 'azw3']);
 
 const lmErrorMessage = (err: unknown, t: (k: string) => string): string => {
   if (err instanceof LmError) {
@@ -72,13 +77,15 @@ export function LibraryScreen() {
   const [seriesSheet, setSeriesSheet] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [remoteSheet, setRemoteSheet] = useState(false);
-  const [lmPrefs, setLmPrefs] = useState<UiPrefs | null>(null);
   const [lmSpaces, setLmSpaces] = useState<LmSpace[] | null>(null);
   const [activeSpace, setActiveSpace] = useState<LmSpace | null>(null);
   const [remoteBooks, setRemoteBooks] = useState<LmBook[] | null>(null);
+  const [remoteCursor, setRemoteCursor] = useState<string | null>(null);
   const [localBooks, setLocalBooks] = useState<Book[]>([]);
   const [lmBusy, setLmBusy] = useState(false);
   const lmClientRef = useRef<LmClient | null>(null);
+  // tokens live in Keychain/Keystore (spec §10); prefs carry the display name only
+  const lmAccount = useMemo(() => createLmAccountDeps(services.settings), [services]);
   const selectionMode = selection.size > 0;
   const { books, seriesList, progressMap, refresh } = useBooks(sort, query, seriesFilter);
   const { columns } = useWindowLayout();
@@ -255,8 +262,8 @@ export function LibraryScreen() {
     ]);
   };
 
-  // the sheet reads prefs straight from the repo: opening must reflect the
-  // state at that moment, not a snapshot captured on mount
+  // the sheet reads the account state at open time: connected → spaces list,
+  // otherwise the sign-in pointer towards the settings screen
   const openRemoteSheet = () => {
     setRemoteSheet(true);
     void (async () => {
@@ -264,11 +271,10 @@ export function LibraryScreen() {
       setLmSpaces(null);
       setActiveSpace(null);
       setRemoteBooks(null);
+      setRemoteCursor(null);
       try {
-        const prefs = await services.settings.getUiPrefs();
-        setLmPrefs(prefs);
-        if (prefs.lmAccessToken === '') return;
-        const client = await lmClientFromPrefs(services.settings);
+        if (!(await lmIsConnected(lmAccount))) return;
+        const client = await lmClientFromAccount(lmAccount);
         lmClientRef.current = client;
         setLmSpaces(await client.listSpaces());
       } catch (err) {
@@ -288,15 +294,35 @@ export function LibraryScreen() {
     void (async () => {
       setLmBusy(true);
       try {
-        const [remotes, locals] = await Promise.all([
+        const [page, locals] = await Promise.all([
           client.listBooks(space.id),
           services.books.listBooks({ sort: 'added' }),
         ]);
-        setRemoteBooks(remotes);
+        setRemoteBooks(page.items);
+        setRemoteCursor(page.nextCursor);
         setLocalBooks(locals);
       } catch (err) {
         console.warn('[library] remote books failed', err);
         setActiveSpace(null);
+        Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
+      } finally {
+        setLmBusy(false);
+      }
+    })();
+  };
+
+  const loadMoreRemote = () => {
+    const client = lmClientRef.current;
+    const space = activeSpace;
+    if (!client || !space || !remoteCursor || lmBusy) return;
+    void (async () => {
+      setLmBusy(true);
+      try {
+        const page = await client.listBooks(space.id, { cursor: remoteCursor });
+        setRemoteBooks((cur) => [...(cur ?? []), ...page.items]);
+        setRemoteCursor(page.nextCursor);
+      } catch (err) {
+        console.warn('[library] remote books page failed', err);
         Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
       } finally {
         setLmBusy(false);
@@ -313,11 +339,14 @@ export function LibraryScreen() {
       if (local) used.add(local.id);
       return { remote, local };
     });
-    return { rows, uploadable: localBooks.filter((b) => !used.has(b.id)) };
+    return { rows, uploadable: localBooks.filter((b) => !used.has(b.id) && UPLOAD_FORMATS.has(b.format)) };
   };
 
   // remote files land in a staging dir so runImport (extraction, dedup,
-  // cover, canonical storage) runs on a plain file path, then gets cleaned up
+  // cover, canonical storage) runs on a plain file path, then gets cleaned up.
+  // The download goes through the signed URL only — no Authorization header —
+  // and the bytes are hash-checked against the version descriptor before the
+  // local copy is confirmed to the server (spec §7).
   const downloadRemote = (rb: LmBook) => {
     const client = lmClientRef.current;
     const space = activeSpace;
@@ -325,16 +354,35 @@ export function LibraryScreen() {
     void (async () => {
       setLmBusy(true);
       const dir = `${services.paths.root}/remote-import`;
-      const tmpPath = `${dir}/${rb.id}.${rb.format}`;
+      let tmpPath: string | null = null;
       try {
-        const bytes = await client.downloadBook(space.id, rb.id);
+        const details = await client.getBook(space.id, rb.id);
+        const version = readyVersion(details.versions);
+        if (!version) {
+          Alert.alert(t('library.remote.title'), t('library.remote.noVersion'));
+          return;
+        }
+        const dl = await client.getDownload(space.id, rb.id, version.id);
+        const res = await fetch(dl.download.url, { method: dl.download.method, headers: dl.download.headers });
+        if (!res.ok) throw new LmError('server', `download → ${res.status}`);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        const sha256 = await sha256HexOfBytes(bytes);
+        if (bytes.length !== dl.sizeBytes || sha256 !== dl.sha256.toLowerCase()) {
+          Alert.alert(t('library.remote.title'), t('library.remote.integrityFailed'));
+          return;
+        }
         await services.fs.ensureDir(dir);
+        tmpPath = `${dir}/${rb.id}.${dl.format}`;
         await services.fs.writeBytes(tmpPath, bytes);
         const [outcome] = await runImport([tmpPath], {
           fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine(),
           untitledTitle: t('library.untitled'),
         });
         if (outcome?.ok) {
+          const installationId = await lmInstallationId(lmAccount);
+          await client.confirmLocalCopy(space.id, rb.id, {
+            installationId, versionId: version.id, sha256: dl.sha256, sizeBytes: dl.sizeBytes,
+          });
           Alert.alert(t('library.remote.title'), t('library.remote.downloadDone'));
           setLocalBooks(await services.books.listBooks({ sort: 'added' }));
           await refresh();
@@ -345,27 +393,44 @@ export function LibraryScreen() {
         console.warn('[library] remote download failed', err);
         Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
       } finally {
-        await services.fs.remove(tmpPath).catch(() => {});
+        if (tmpPath) await services.fs.remove(tmpPath).catch(() => {});
         setLmBusy(false);
       }
     })();
   };
 
+  // three-step import (begin → signed PUT → complete + polling); the sha256
+  // computed here lets the server deduplicate an identical file as 'duplicate'
   const uploadLocal = (book: Book) => {
     const client = lmClientRef.current;
     const space = activeSpace;
     if (!client || !space) return;
+    if (!UPLOAD_FORMATS.has(book.format)) {
+      Alert.alert(t('library.remote.title'), t('library.remote.formatUnsupported'));
+      return;
+    }
     void (async () => {
       setLmBusy(true);
       try {
         const bytes = await services.fs.readBytes(services.paths.bookPath(book.id, book.format));
-        await client.uploadBook(space.id, {
-          fileName: book.fileName,
-          mime: EXPORT_MIME[book.format] ?? 'application/octet-stream',
+        const outcome = await uploadBookFile(
+          { client, spaceId: space.id, fetchImpl: fetch, newId: uuidV7 },
+          {
+            filename: book.fileName,
+            format: book.format,
+            sizeBytes: bytes.length,
+            sha256: await sha256HexOfBytes(bytes),
+          },
           bytes,
-        }, { title: book.title, author: book.author, series: book.series, seriesIndex: book.seriesIndex });
-        Alert.alert(t('library.remote.title'), t('library.remote.uploadDone'));
-        setRemoteBooks(await client.listBooks(space.id));
+        );
+        const message = outcome === 'ready' ? t('library.remote.uploadDone')
+          : outcome === 'duplicate' ? t('library.remote.uploadDuplicate')
+          : outcome === 'timeout' ? t('library.remote.uploadTimeout')
+          : t('library.remote.failed');
+        Alert.alert(t('library.remote.title'), message);
+        const page = await client.listBooks(space.id);
+        setRemoteBooks(page.items);
+        setRemoteCursor(page.nextCursor);
       } catch (err) {
         console.warn('[library] remote upload failed', err);
         Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
@@ -375,22 +440,52 @@ export function LibraryScreen() {
     })();
   };
 
-  const aiMeta = () => {
+  // conflicts demand an explicit choice (spec §8): no silent newest-wins. A
+  // raced 409 on the chosen write re-opens the same question with fresh data.
+  const askConflictChoice = (conflict: LmConflict): Promise<'server' | 'local' | null> =>
+    new Promise((resolve) => {
+      Alert.alert(
+        t('library.remote.conflictTitle'),
+        t('library.remote.conflictBody', {
+          title: conflict.remoteTitle,
+          server: Math.round(conflict.server.percent),
+          local: Math.round(conflict.local.fraction * 100),
+        }),
+        [
+          { text: t('library.remote.conflictServer'), onPress: () => resolve('server') },
+          { text: t('library.remote.conflictLocal'), onPress: () => resolve('local') },
+          { text: t('common.cancel'), style: 'cancel', onPress: () => resolve(null) },
+        ],
+        { cancelable: false },
+      );
+    });
+
+  const resolveConflict = async (spaceId: string, installationId: string, conflict: LmConflict) => {
     const client = lmClientRef.current;
-    const space = activeSpace;
-    if (!client || !space) return;
-    void (async () => {
-      setLmBusy(true);
+    if (!client) return;
+    for (;;) {
+      const choice = await askConflictChoice(conflict);
+      if (choice === null) return;
+      const syncDeps = {
+        client,
+        locals: localBooks,
+        getProgress: (id: string) => services.progress.getProgress(id),
+        saveProgress: (p: Parameters<typeof services.progress.saveProgress>[0]) => services.progress.saveProgress(p),
+        installationId,
+        newOperationId: uuidV7,
+      };
       try {
-        const { updated } = await client.refreshMetadataAi(space.id);
-        Alert.alert(t('library.remote.title'), t('library.remote.aiMetaDone', { updated }));
+        if (choice === 'server') {
+          await applyServerProgress(syncDeps, conflict.localId, conflict.server);
+        } else {
+          await pushLocalChoice(syncDeps, spaceId, conflict);
+        }
+        return;
       } catch (err) {
-        console.warn('[library] remote ai metadata failed', err);
-        Alert.alert(t('library.remote.title'), lmErrorMessage(err, t));
-      } finally {
-        setLmBusy(false);
+        console.warn('[library] conflict resolution failed', err);
+        // fall through: re-ask until the user picks a side that sticks or cancels
       }
-    })();
+    }
   };
 
   const syncProgress = () => {
@@ -400,13 +495,22 @@ export function LibraryScreen() {
     void (async () => {
       setLmBusy(true);
       try {
+        const installationId = await lmInstallationId(lmAccount);
         const summary = await syncSpaceProgress({
           client,
           locals: localBooks,
           getProgress: (id) => services.progress.getProgress(id),
           saveProgress: (p) => services.progress.saveProgress(p),
+          installationId,
+          newOperationId: uuidV7,
         }, space.id, remoteBooks ?? []);
-        Alert.alert(t('library.remote.title'), t('library.remote.syncDone', { ...summary }));
+        for (const conflict of summary.conflicts) {
+          await resolveConflict(space.id, installationId, conflict);
+        }
+        Alert.alert(t('library.remote.title'), t('library.remote.syncDone', {
+          pulled: summary.pulled, pushed: summary.pushed, inSync: summary.inSync,
+          none: summary.none, failed: summary.failed, conflicts: summary.conflicts.length,
+        }));
         await refresh();
       } catch (err) {
         console.warn('[library] remote progress sync failed', err);
@@ -657,26 +761,24 @@ export function LibraryScreen() {
             <View style={styles.sheetHandle}>
               <View style={[styles.sheetHandleBar, { backgroundColor: t0.border }]} />
             </View>
-            {!lmPrefs ? (
-              <ActivityIndicator style={{ paddingVertical: 24 }} color={t0.muted} />
-            ) : lmPrefs.lmAccessToken === '' ? (
-              <>
-                <Text style={[styles.sheetTitle, { color: t0.foreground }]}>{t('library.remote.title')}</Text>
-                <Text style={[styles.remoteEmpty, { color: t0.muted }]}>{t('library.remote.needAccount')}</Text>
-                <Pressable style={styles.sheetRow} onPress={() => { setRemoteSheet(false); router.push('/settings'); }}>
-                  <Ionicons name="settings-outline" size={20} color={t0.foreground} />
-                  <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.remote.goSettings')}</Text>
-                </Pressable>
-              </>
+            {!activeSpace && lmSpaces === null ? (
+              lmBusy ? (
+                <ActivityIndicator style={{ paddingVertical: 24 }} color={t0.muted} />
+              ) : (
+                <>
+                  <Text style={[styles.sheetTitle, { color: t0.foreground }]}>{t('library.remote.title')}</Text>
+                  <Text style={[styles.remoteEmpty, { color: t0.muted }]}>{t('library.remote.needAccount')}</Text>
+                  <Pressable style={styles.sheetRow} onPress={() => { setRemoteSheet(false); router.push('/settings'); }}>
+                    <Ionicons name="settings-outline" size={20} color={t0.foreground} />
+                    <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.remote.goSettings')}</Text>
+                  </Pressable>
+                </>
+              )
             ) : activeSpace ? (
               <>
                 <Pressable style={styles.sheetRow} onPress={() => { setActiveSpace(null); setRemoteBooks(null); }} disabled={lmBusy}>
                   <Ionicons name="arrow-back" size={20} color={t0.foreground} />
                   <Text numberOfLines={1} style={[styles.sheetRowText, { color: t0.foreground }]}>{activeSpace.name}</Text>
-                </Pressable>
-                <Pressable style={styles.sheetRow} onPress={aiMeta} disabled={lmBusy}>
-                  <Ionicons name="sparkles-outline" size={20} color={t0.foreground} />
-                  <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.remote.aiMeta')}</Text>
                 </Pressable>
                 <Pressable style={styles.sheetRow} onPress={syncProgress} disabled={lmBusy}>
                   <Ionicons name="sync-outline" size={20} color={t0.foreground} />
@@ -689,18 +791,22 @@ export function LibraryScreen() {
                     <View key={remote.id} style={styles.sheetRow}>
                       {local ? (
                         <Ionicons name="checkmark-circle" size={20} color={t0.accent} />
-                      ) : SUPPORTED_REMOTE_FORMATS.has(remote.format) ? (
+                      ) : (
                         <Pressable onPress={() => downloadRemote(remote)} hitSlop={8} disabled={lmBusy} accessibilityRole="button" accessibilityLabel={`${t('library.remote.download')} ${remote.title}`}>
                           <Ionicons name="cloud-download-outline" size={20} color={t0.accent} />
                         </Pressable>
-                      ) : (
-                        <Ionicons name="book-outline" size={20} color={t0.muted} />
                       )}
                       <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>
                         {remote.title}{remote.author ? ` — ${remote.author}` : ''}
                       </Text>
                     </View>
                   ))}
+                  {remoteCursor ? (
+                    <Pressable style={styles.sheetRow} onPress={loadMoreRemote} disabled={lmBusy}>
+                      <Ionicons name="chevron-down" size={20} color={t0.foreground} />
+                      <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.remote.loadMore')}</Text>
+                    </Pressable>
+                  ) : null}
                 </ScrollView>
                 {remoteView.uploadable.length > 0 ? (
                   <>
@@ -729,7 +835,6 @@ export function LibraryScreen() {
                       <Pressable key={s.id} style={styles.sheetRow} onPress={() => enterSpace(s)}>
                         <Ionicons name="server-outline" size={20} color={t0.foreground} />
                         <Text numberOfLines={1} style={[styles.sheetRowText, styles.sheetRowMain, { color: t0.foreground }]}>{s.name}</Text>
-                        <Text style={[styles.seriesCount, { color: t0.muted }]}>{s.booksCount}</Text>
                       </Pressable>
                     ))}
                   </ScrollView>

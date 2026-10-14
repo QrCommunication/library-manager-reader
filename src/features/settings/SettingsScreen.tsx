@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,7 +13,11 @@ import { md5Hex } from '../../core/progress/partialMd5';
 import { createKoSyncClient, KoSyncError } from '../../core/progress/koreaderSync';
 import { isKoSyncConfigured, koSyncClientFromPrefs, KO_SYNC_DEVICE } from '../../core/progress/koSyncAccount';
 import { syncLibraryProgress } from '../../core/progress/koreaderSyncService';
-import { lmLogin, LmError } from '../../core/remote/lmClient';
+import { LmError } from '../../core/remote/lmClient';
+import { lmBeginSignIn, lmCompleteSignIn, lmDisconnect, lmIsConnected } from '../../core/remote/lmAccount';
+import { LM_REDIRECT_URI } from '../../core/remote/lmPkce';
+import { createLmAccountDeps } from '../../core/storage/expoSecureStore';
+import * as WebBrowser from 'expo-web-browser';
 import { uuidV7 } from '../../core/uuid';
 import { useUiPrefsStore } from './uiPrefsStore';
 import { useReaderSettingsStore } from './readerSettingsStore';
@@ -64,18 +68,21 @@ export function SettingsScreen() {
   const [koPassword, setKoPassword] = useState('');
   const [koBusy, setKoBusy] = useState(false);
   const [koSyncing, setKoSyncing] = useState(false);
-  const [lmUsername, setLmUsername] = useState<string | null>(null);
-  const [lmPassword, setLmPassword] = useState('');
+  const [lmConnected, setLmConnected] = useState(false);
   const [lmBusy, setLmBusy] = useState(false);
   const server = koServer ?? prefs.koreaderServer;
   const username = koUsername ?? prefs.koreaderUsername;
-  const lmUser = lmUsername ?? prefs.lmUsername;
-  const lmConnected = prefs.lmAccessToken !== '';
   const koConnected = isKoSyncConfigured(prefs);
+  // tokens live in Keychain/Keystore; the prefs only carry the display name
+  const lmAccount = useMemo(() => createLmAccountDeps(services.settings), [services]);
 
   useEffect(() => {
     void useUiPrefsStore.getState().hydrate();
   }, []);
+
+  useEffect(() => {
+    void lmIsConnected(lmAccount).then(setLmConnected);
+  }, [lmAccount]);
 
   const koErrorMessage = (err: unknown): string => {
     if (!(err instanceof KoSyncError)) return t('settings.koreader.error');
@@ -152,30 +159,40 @@ export function SettingsScreen() {
     }
   };
 
+  const lmErrorMessage = (err: unknown): string => {
+    if (err instanceof LmError && err.kind === 'network') return t('settings.lm.network');
+    return t('settings.lm.error');
+  };
+
+  // PKCE through the system browser: the app only ever sees the callback code,
+  // the verifier stays in the secure store and the password never touches it
   const lmConnect = async () => {
-    const usernameTrimmed = lmUser.trim();
-    if (!usernameTrimmed || !lmPassword) {
-      Alert.alert(t('settings.lm.title'), t('settings.lm.needFields'));
-      return;
-    }
     setLmBusy(true);
     try {
-      const tokens = await lmLogin({ username: usernameTrimmed, password: lmPassword });
-      await update({
-        lmUsername: usernameTrimmed,
-        lmAccessToken: tokens.accessToken,
-        lmRefreshToken: tokens.refreshToken,
-        lmTokenExpiresAt: tokens.expiresAt,
-      });
-      setLmPassword('');
+      const url = await lmBeginSignIn(lmAccount);
+      const res = await WebBrowser.openAuthSessionAsync(url, LM_REDIRECT_URI);
+      if (res.type !== 'success') {
+        Alert.alert(t('settings.lm.title'), t('settings.lm.cancelled'));
+        return;
+      }
+      await lmCompleteSignIn(lmAccount, res.url);
+      setLmConnected(true);
+      void useUiPrefsStore.getState().hydrate();
       Alert.alert(t('settings.lm.title'), t('settings.lm.loginOk'));
     } catch (err) {
-      const msg = err instanceof LmError && err.kind === 'network'
-        ? t('settings.lm.network')
-        : err instanceof LmError && err.kind === 'auth'
-          ? t('settings.lm.badCredentials')
-          : t('settings.lm.error');
-      Alert.alert(t('settings.lm.title'), msg);
+      Alert.alert(t('settings.lm.title'), lmErrorMessage(err));
+    } finally {
+      setLmBusy(false);
+    }
+  };
+
+  const lmLogout = async () => {
+    setLmBusy(true);
+    try {
+      await lmDisconnect(lmAccount);
+      setLmConnected(false);
+    } catch (err) {
+      Alert.alert(t('settings.lm.title'), lmErrorMessage(err));
     } finally {
       setLmBusy(false);
     }
@@ -274,31 +291,14 @@ export function SettingsScreen() {
       <Text style={[styles.sectionTitle, { color: t0.foreground }]}>{t('settings.lm.title')}</Text>
       <Text style={[styles.sectionHint, { color: t0.muted }]}>{t('settings.lm.hint')}</Text>
       {statusRow(lmConnected, lmConnected ? t('settings.lm.connected', { name: prefs.lmUsername }) : t('settings.lm.disconnected'))}
-      <TextInput
-        style={[styles.input, { borderColor: t0.border, color: t0.foreground }]}
-        placeholder={t('settings.lm.username')}
-        placeholderTextColor={t0.muted}
-        value={lmUser}
-        onChangeText={setLmUsername}
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-      <TextInput
-        style={[styles.input, { borderColor: t0.border, color: t0.foreground }]}
-        placeholder={t('settings.lm.password')}
-        placeholderTextColor={t0.muted}
-        value={lmPassword}
-        onChangeText={setLmPassword}
-        autoCapitalize="none"
-        autoCorrect={false}
-        secureTextEntry
-      />
       <Pressable
         style={[styles.actionButton, { borderColor: t0.accent }, lmBusy && { opacity: 0.4 }]}
         disabled={lmBusy}
-        onPress={() => { void lmConnect(); }}
+        onPress={() => { void (lmConnected ? lmLogout() : lmConnect()); }}
       >
-        <Text style={[styles.actionButtonText, { color: t0.accent }]}>{t('settings.lm.login')}</Text>
+        <Text style={[styles.actionButtonText, { color: t0.accent }]}>
+          {lmConnected ? t('settings.lm.logout') : t('settings.lm.login')}
+        </Text>
       </Pressable>
 
       <Text style={[styles.sectionTitle, { color: t0.foreground }]}>{t('settings.koreader.title')}</Text>
