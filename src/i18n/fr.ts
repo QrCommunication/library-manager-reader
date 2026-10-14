@@ -171,6 +171,10 @@ export const fr = {
     },
     storage: 'Stockage',
     about: 'À propos',
+    exportAll: 'Exporter toute la bibliothèque',
+    exportAllHint: 'Zip de tous les livres et des positions KOReader — le dossier de destination est demandé.',
+    exportAllAction: 'Exporter',
+    exportAllEmpty: 'Aucun livre à exporter',
     translateTarget: 'Langue de traduction',
     lm: {
       title: 'library-manager.com',

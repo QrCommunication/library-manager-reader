@@ -222,21 +222,6 @@ export function LibraryScreen() {
     }
   };
 
-  // whole library: every non-deleted book regardless of the active filters
-  const exportLibrary = async () => {
-    try {
-      const all = await services.books.listBooks({ sort: 'added' });
-      if (all.length === 0) return;
-      const zip = zipEntries(await buildExportEntries(exportDeps(), all));
-      const stamp = new Date().toISOString().slice(0, 10);
-      const saved = await saveBytesToUserDir(`library-reader-export-${stamp}.zip`, EXPORT_MIME.zip!, zip);
-      if (saved) Alert.alert(t('library.exportAll'), t('library.export.done'));
-    } catch (err) {
-      console.warn('[library] export failed', err);
-      Alert.alert(t('library.exportAll'), t('library.export.failed'));
-    }
-  };
-
   const toggleSelect = (id: string) =>
     setSelection((cur) => {
       const next = new Set(cur);
@@ -538,16 +523,6 @@ export function LibraryScreen() {
           <Ionicons name="chevron-forward" size={22} color={t0.muted} />
         </Pressable>
         <View style={styles.titleActions}>
-          <Pressable
-            onPress={() => void exportLibrary()}
-            accessibilityLabel={t('library.exportAll')}
-            accessibilityRole="button"
-            hitSlop={12}
-            disabled={importing}
-            style={[styles.iconButton, { borderColor: t0.border, opacity: importing ? 0.4 : 1 }]}
-          >
-            <Ionicons name="archive-outline" size={20} color={t0.foreground} />
-          </Pressable>
           <Pressable
             onPress={() => setSeriesSheet(true)}
             accessibilityLabel={t('library.series')}
