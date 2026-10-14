@@ -32,6 +32,8 @@ export function createExpoFsAdapter(): FsAdapter {
       return new Uint8Array(decode(b64));
     },
     async readText(path) { return readAsStringAsync(path, { encoding: EncodingType.UTF8 }); },
+    async readBytes(path) { return new File(path).bytes(); },
+    async writeBytes(path, bytes) { new File(path).write(bytes); },
     async directorySize(path) {
       const dir = new Directory(path);
       if (!dir.exists) return 0;

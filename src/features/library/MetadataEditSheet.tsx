@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useServices } from '../../core/services';
 import type { Book } from '../../core/types';
+import { writeMetaToStoredFile } from '../../core/library/fileMeta';
 import { themeTokens } from '../../theme/tokens';
 import { useKeyboardHeight } from './useKeyboardHeight';
 
@@ -32,17 +33,16 @@ function Field({ label, value, onChange, tokens, keyboard }: {
   );
 }
 
-// Bottom sheet editing a book's metadata by hand: the stored file stays the
-// source for the bulk refresh, so a manual fix here survives only until that
-// file provides the same fields again — series autocomplete comes from the
-// library's existing series (case-insensitive contains match).
+// Bottom sheet editing a book's metadata. The edit lands in SQLite and is
+// mirrored into the stored file (EPUB OPF / CBZ ComicInfo — MOBI/AZW3 stay
+// read-only), so a bulk refresh or an export keeps the fixed values.
 export function MetadataEditSheet({ book, onClose, onSaved }: {
   book: Book;
   onClose(): void;
   onSaved(): void;
 }) {
   const { t } = useTranslation();
-  const { books } = useServices();
+  const { books, fs, paths } = useServices();
   const insets = useSafeAreaInsets();
   const win = useWindowDimensions();
   const kb = useKeyboardHeight();
@@ -71,12 +71,15 @@ export function MetadataEditSheet({ book, onClose, onSaved }: {
     if (!canSave) return;
     setSaving(true);
     const parsedTome = Number.parseFloat(tome.trim().replace(',', '.'));
-    await books.updateMetadata(book.id, {
-      title: title.trim(),
-      author: author.trim() || null,
-      series: series.trim() || null,
-      seriesIndex: tome.trim() !== '' && Number.isFinite(parsedTome) ? parsedTome : null,
-    });
+    const seriesIndex = tome.trim() !== '' && Number.isFinite(parsedTome) ? parsedTome : null;
+    const meta = { title: title.trim(), author: author.trim() || null, series: series.trim() || null, seriesIndex };
+    await books.updateMetadata(book.id, meta);
+    // best-effort mirror into the stored file; the row is already saved
+    try {
+      await writeMetaToStoredFile(fs, paths, book, meta);
+    } catch (err) {
+      console.warn('metadata file write failed', err);
+    }
     onSaved();
   };
 

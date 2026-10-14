@@ -1,4 +1,7 @@
 import { unzipSync, zipSync, strFromU8, strToU8, type Zippable } from 'fflate';
+import type { FsAdapter } from '../storage/fsAdapter';
+import type { StoragePaths } from '../storage/paths';
+import type { Book, BookFormat } from '../types';
 
 export interface FileMeta {
   title: string;
@@ -9,6 +12,10 @@ export interface FileMeta {
 
 /** formats whose container this module can rewrite; cbr is stored as cbz */
 export type WritableMetaFormat = 'epub' | 'cbz';
+
+/** cbr originals live on disk as converted cbz files */
+export const storedFormat = (b: Pick<Book, 'format' | 'originalFormat'>): BookFormat =>
+  b.originalFormat === 'cbr' ? 'cbz' : b.format;
 
 const escapeXml = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -82,8 +89,25 @@ const writeEpub = (bytes: Uint8Array, meta: FileMeta): Uint8Array => {
 };
 
 /** null: the format does not support embedded metadata writes (MOBI/AZW3) */
-export function writeFileMeta(format: 'epub' | 'cbz' | 'mobi' | 'azw3', bytes: Uint8Array, meta: FileMeta): Uint8Array | null {
+export function writeFileMeta(format: BookFormat, bytes: Uint8Array, meta: FileMeta): Uint8Array | null {
   if (format === 'epub') return writeEpub(bytes, meta);
   if (format === 'cbz') return writeCbz(bytes, meta);
   return null;
+}
+
+export type MetaFs = Pick<FsAdapter, 'readBytes' | 'writeBytes'>;
+export type MetaPaths = Pick<StoragePaths, 'bookPath'>;
+
+/** writes the metadata into the stored file; false when the format is read-only (MOBI/AZW3) */
+export async function writeMetaToStoredFile(
+  fs: MetaFs,
+  paths: MetaPaths,
+  book: Pick<Book, 'id' | 'format' | 'originalFormat'>,
+  meta: FileMeta,
+): Promise<boolean> {
+  const format = storedFormat(book);
+  const updated = writeFileMeta(format, await fs.readBytes(paths.bookPath(book.id, format)), meta);
+  if (!updated) return false;
+  await fs.writeBytes(paths.bookPath(book.id, format), updated);
+  return true;
 }

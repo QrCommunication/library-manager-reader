@@ -10,6 +10,7 @@ const fakeFs = {
   remove: async () => {}, fileSize: async () => 0, writeBase64: async () => {}, writeText: async () => {},
   readBase64Chunks: async () => {}, directorySize: async () => 0,
   readRange: async () => null, readText: async () => '',
+  readBytes: async () => new Uint8Array(), writeBytes: async () => {},
 };
 
 describe('readerSettingsStore', () => {

@@ -1,5 +1,5 @@
 import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
-import { writeFileMeta } from '../fileMeta';
+import { storedFormat, writeFileMeta, writeMetaToStoredFile } from '../fileMeta';
 
 const OPF = `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
@@ -27,6 +27,11 @@ const opfOf = (bytes: Uint8Array): string => {
   const opfPath = /full-path="([^"]+)"/.exec(container)![1]!;
   return strFromU8(files[opfPath]!);
 };
+
+const makeCbzInfo = (): Uint8Array =>
+  zipSync({ 'page-1.jpg': new Uint8Array([0xff, 0xd8]), 'ComicInfo.xml': strToU8('<ComicInfo></ComicInfo>') });
+
+const entryOf = (bytes: Uint8Array, name: string): string => strFromU8(unzipSync(bytes)[name]!);
 
 describe('writeFileMeta — epub', () => {
   it('rewrites dc:title and dc:creator in the OPF, keeping every other file', () => {
@@ -120,5 +125,47 @@ describe('writeFileMeta — unsupported formats', () => {
   it('returns null for mobi and azw3 (binary formats are read-only)', () => {
     expect(writeFileMeta('mobi', new Uint8Array(8), { title: 'T', author: null, series: null, seriesIndex: null })).toBeNull();
     expect(writeFileMeta('azw3', new Uint8Array(8), { title: 'T', author: null, series: null, seriesIndex: null })).toBeNull();
+  });
+});
+
+describe('writeMetaToStoredFile', () => {
+  const memoryFs = (seed: Record<string, Uint8Array>) => {
+    const store = new Map(Object.entries(seed));
+    const writes: string[] = [];
+    return {
+      writes,
+      readBytes: async (p: string) => store.get(p)!,
+      writeBytes: async (p: string, bytes: Uint8Array) => { writes.push(p); store.set(p, bytes); },
+    };
+  };
+  const paths = { bookPath: (id: string, ext: string) => `/books/${id}.${ext}` };
+  const book = { id: 'b1', format: 'epub', originalFormat: null } as const;
+
+  it('rewrites the stored epub file in place', async () => {
+    const fs = memoryFs({ '/books/b1.epub': makeEpub() });
+    const ok = await writeMetaToStoredFile(fs, paths, book, { title: 'New Title', author: 'New Author', series: null, seriesIndex: null });
+    expect(ok).toBe(true);
+    expect(fs.writes).toEqual(['/books/b1.epub']);
+    expect(opfOf(await fs.readBytes('/books/b1.epub'))).toContain('<dc:title>New Title</dc:title>');
+  });
+
+  it('reads and writes the .cbz path for cbr originals', async () => {
+    const fs = memoryFs({ '/books/b2.cbz': makeCbzInfo() });
+    const ok = await writeMetaToStoredFile(fs, paths, { id: 'b2', format: 'cbz', originalFormat: 'cbr' }, { title: 'C1', author: null, series: 'S', seriesIndex: 1 });
+    expect(ok).toBe(true);
+    expect(entryOf(await fs.readBytes('/books/b2.cbz'), 'ComicInfo.xml')).toContain('<Series>S</Series>');  });
+
+  it('returns false and leaves the file untouched for read-only formats', async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const fs = memoryFs({ '/books/b3.mobi': bytes });
+    const ok = await writeMetaToStoredFile(fs, paths, { id: 'b3', format: 'mobi', originalFormat: null }, { title: 'T', author: null, series: null, seriesIndex: null });
+    expect(ok).toBe(false);
+    expect(fs.writes).toEqual([]);
+    expect(await fs.readBytes('/books/b3.mobi')).toEqual(bytes);
+  });
+
+  it('exposes the on-disk format of a book (cbr stored as cbz)', () => {
+    expect(storedFormat({ format: 'cbz', originalFormat: 'cbr' })).toBe('cbz');
+    expect(storedFormat({ format: 'epub', originalFormat: null })).toBe('epub');
   });
 });
