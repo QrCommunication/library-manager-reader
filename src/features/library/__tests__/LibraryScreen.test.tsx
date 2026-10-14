@@ -70,7 +70,7 @@ describe('LibraryScreen', () => {
     expect(screen.getByText('Ouvrir les réglages')).toBeOnTheScreen();
   });
 
-  it('lists a space books and marks local matches instead of offering download/upload', async () => {
+  it('lists a space books as tiles and marks the ones already in the library', async () => {
     const services = await makeServices();
     const mk = (title: string) =>
       services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
@@ -101,18 +101,36 @@ describe('LibraryScreen', () => {
       await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
       fireEvent.press(await screen.findByLabelText('library-manager.com'));
       fireEvent.press(await screen.findByText('Perso'));
-      // remote 'Serveur' matches the local copy → checkmark, no download button
-      expect(await screen.findByText('Sur le serveur (1)')).toBeOnTheScreen();
-      expect(screen.queryByLabelText('Télécharger Serveur')).toBeNull();
-      // the unmatched local book lands in the upload section
-      expect(await screen.findByText('Locaux absents du serveur (1)')).toBeOnTheScreen();
-      expect(screen.getByLabelText('Envoyer LocalOnly')).toBeOnTheScreen();
-      // the mobile API has no AI metadata endpoint: the action is gone
-      expect(screen.queryByText('Mettre à jour les métadonnées (IA)')).toBeNull();
+      // the remote book renders as a tile; the matched one carries the badge…
+      expect(await screen.findByLabelText('Serveur — Dans la bibliothèque')).toBeOnTheScreen();
+      // …and the upload section is gone (uploads moved to the book long-press menu)
+      expect(screen.queryByText('Locaux absents du serveur (1)')).toBeNull();
       expect(screen.getByText('Synchroniser l’avancement')).toBeOnTheScreen();
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+
+  it('offers server upload in the long-press menu when signed in and the format is supported', async () => {
+    const services = await makeServices();
+    await services.books.createBook({ title: 'LocalOnly', author: null, format: 'epub', originalFormat: null, fileName: 'l.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    const { LM_TOKEN_KEYS } = require('../../../core/remote/lmTokens');
+    const SecureStore = require('expo-secure-store');
+    await SecureStore.setItemAsync(LM_TOKEN_KEYS.access, 'tok');
+    await SecureStore.setItemAsync(LM_TOKEN_KEYS.refresh, 'rt');
+    await SecureStore.setItemAsync(LM_TOKEN_KEYS.expiresAt, String(Date.now() + 3600_000));
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent(await screen.findByText('LocalOnly'), 'longPress');
+    expect(await screen.findByText('Envoyer vers library-manager.com')).toBeOnTheScreen();
+  });
+
+  it('hides the server upload action when not signed in', async () => {
+    const services = await makeServices();
+    await services.books.createBook({ title: 'LocalOnly', author: null, format: 'epub', originalFormat: null, fileName: 'l.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
+    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    fireEvent(await screen.findByText('LocalOnly'), 'longPress');
+    expect(await screen.findByText('Ouvrir')).toBeOnTheScreen();
+    expect(screen.queryByText('Envoyer vers library-manager.com')).toBeNull();
   });
 
   it('deletes via long-press menu, keeping files so the trash can restore', async () => {
