@@ -1,3 +1,4 @@
+import { storedFormat } from './fileMeta';
 import type { MetadataPort } from '../reader/metadataPort';
 import type { StoragePaths } from '../storage/paths';
 import type { Book } from '../types';
@@ -26,10 +27,6 @@ const patchFrom = (m: Awaited<ReturnType<MetadataPort['extract']>>['metadata']):
   ...(m.series != null ? { series: m.series } : {}),
   ...(m.seriesIndex != null ? { seriesIndex: m.seriesIndex } : {}),
 });
-
-// cbr originals live on disk as converted cbz files
-const storedFormat = (b: Pick<Book, 'format' | 'originalFormat'>): Book['format'] =>
-  b.originalFormat === 'cbr' ? 'cbz' : b.format;
 
 export async function refreshLibraryMetadata(
   deps: RefreshDeps,
