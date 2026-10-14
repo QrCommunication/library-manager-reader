@@ -10,7 +10,12 @@ export default {
     scheme: 'lmr',
     userInterfaceStyle: 'automatic',
     ios: { bundleIdentifier: 'com.librarymanager.reader', supportsTablet: true },
-    android: { package: 'com.librarymanager.reader', adaptiveIcon: { foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#ffffff' } },
+    android: {
+      package: 'com.librarymanager.reader',
+      // Google Play versionCode: app version without dots (0.1.0 -> 010)
+      versionCode: 10,
+      adaptiveIcon: { foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#ffffff' },
+    },
     plugins: ['expo-router'],
     experiments: { typedRoutes: true },
     extra: {
