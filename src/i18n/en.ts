@@ -181,6 +181,7 @@ export const en = {
       hint: 'Sign in through your browser (no password stored in the app) to reach your spaces, books and reading progress.',
       login: 'Sign in',
       logout: 'Sign out',
+      close: 'Close',
       cancelled: 'Sign-in cancelled',
       loginOk: 'Signed in',
       connected: 'Signed in as {{name}}',

@@ -181,6 +181,7 @@ export const fr = {
       hint: 'Connexion via le navigateur (aucun mot de passe stocké dans l’appli) pour retrouver vos espaces, vos livres et votre avancement.',
       login: 'Se connecter',
       logout: 'Se déconnecter',
+      close: 'Fermer',
       cancelled: 'Connexion annulée',
       loginOk: 'Connexion réussie',
       connected: 'Connecté : {{name}}',
