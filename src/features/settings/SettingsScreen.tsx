@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
+import { Alert, ActivityIndicator, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +10,8 @@ import type { LanguagePref, ThemeName } from '../../core/types';
 import { initI18n } from '../../i18n';
 import { themeTokens } from '../../theme/tokens';
 import { md5Hex } from '../../core/progress/partialMd5';
+import { buildExportEntries, zipEntries } from '../../core/library/exportService';
+import { saveBytesToUserDir, EXPORT_MIME } from '../../core/storage/saf';
 import { createKoSyncClient, KoSyncError } from '../../core/progress/koreaderSync';
 import { isKoSyncConfigured, koSyncClientFromPrefs, KO_SYNC_DEVICE } from '../../core/progress/koSyncAccount';
 import { syncLibraryProgress } from '../../core/progress/koreaderSyncService';
@@ -70,6 +72,7 @@ export function SettingsScreen() {
   const [koSyncing, setKoSyncing] = useState(false);
   const [lmConnected, setLmConnected] = useState(false);
   const [lmBusy, setLmBusy] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
   const server = koServer ?? prefs.koreaderServer;
   const username = koUsername ?? prefs.koreaderUsername;
   const koConnected = isKoSyncConfigured(prefs);
@@ -156,6 +159,32 @@ export function SettingsScreen() {
       Alert.alert(t('settings.koreader.title'), koErrorMessage(err));
     } finally {
       setKoSyncing(false);
+    }
+  };
+
+  // one-tap whole-library export: renamed files + KOReader sidecars in a zip,
+  // destination chosen in the system folder picker (same flow as the library)
+  const exportAll = async () => {
+    setExportingAll(true);
+    try {
+      const all = await services.books.listBooks({ sort: 'added' });
+      if (all.length === 0) {
+        Alert.alert(t('settings.exportAll'), t('settings.exportAllEmpty'));
+        return;
+      }
+      const zip = zipEntries(await buildExportEntries({
+        fs: services.fs,
+        paths: services.paths,
+        getProgress: (id) => services.progress.getProgress(id),
+      }, all));
+      const stamp = new Date().toISOString().slice(0, 10);
+      const saved = await saveBytesToUserDir(`library-reader-export-${stamp}.zip`, EXPORT_MIME.zip!, zip);
+      if (saved) Alert.alert(t('settings.exportAll'), t('library.export.done'));
+    } catch (err) {
+      console.warn('[settings] library export failed', err);
+      Alert.alert(t('settings.exportAll'), t('library.export.failed'));
+    } finally {
+      setExportingAll(false);
     }
   };
 
@@ -357,6 +386,21 @@ export function SettingsScreen() {
         <Text style={[styles.syncButtonText, { color: t0.onAccent }]}>
           {koSyncing ? t('settings.koreader.syncing') : t('settings.koreader.sync')}
         </Text>
+      </Pressable>
+
+      <Text style={[styles.sectionTitle, { color: t0.foreground }]}>{t('settings.exportAll')}</Text>
+      <Text style={[styles.sectionHint, { color: t0.muted }]}>{t('settings.exportAllHint')}</Text>
+      <Pressable
+        style={[styles.syncButton, { backgroundColor: t0.accent }, exportingAll && { opacity: 0.4 }]}
+        disabled={exportingAll}
+        onPress={() => { void exportAll(); }}
+        accessibilityRole="button"
+      >
+        {exportingAll ? (
+          <ActivityIndicator size="small" color={t0.onAccent} />
+        ) : (
+          <Text style={[styles.syncButtonText, { color: t0.onAccent }]}>{t('settings.exportAllAction')}</Text>
+        )}
       </Pressable>
 
       <View style={[styles.infoRow, { borderColor: t0.border }]}>
