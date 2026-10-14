@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, FlatList, Pressable, StatusBar, StyleSheet, Text, View, useColorScheme } from 'react-native';
+import { FlatList, Pressable, StatusBar, StyleSheet, Text, View, useColorScheme } from 'react-native';
+import { confirm } from '../../ui/dialogs';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -45,31 +46,19 @@ export function TrashScreen() {
   };
 
   const purgeOne = (b: Book) => {
-    Alert.alert(t('trash.purge'), b.title, [
-      { text: t('common.cancel') },
-      {
-        text: t('common.confirm'),
-        style: 'destructive',
-        onPress: () => void (async () => {
-          await purgeBookFiles({ fs: services.fs, paths: services.paths, books: services.books }, b);
-          await refresh();
-        })(),
-      },
-    ]);
+    void (async () => {
+      if (!(await confirm({ title: t('trash.purge'), message: b.title, confirmLabel: t('common.confirm'), destructive: true }))) return;
+      await purgeBookFiles({ fs: services.fs, paths: services.paths, books: services.books }, b);
+      await refresh();
+    })();
   };
 
   const emptyAll = () => {
-    Alert.alert(t('trash.emptyTrash'), t('trash.hint', { days: TRASH_RETENTION_DAYS }), [
-      { text: t('common.cancel') },
-      {
-        text: t('common.confirm'),
-        style: 'destructive',
-        onPress: () => void (async () => {
-          await emptyTrash({ fs: services.fs, paths: services.paths, books: services.books });
-          await refresh();
-        })(),
-      },
-    ]);
+    void (async () => {
+      if (!(await confirm({ title: t('trash.emptyTrash'), message: t('trash.hint', { days: TRASH_RETENTION_DAYS }), confirmLabel: t('common.confirm'), destructive: true }))) return;
+      await emptyTrash({ fs: services.fs, paths: services.paths, books: services.books });
+      await refresh();
+    })();
   };
 
   return (

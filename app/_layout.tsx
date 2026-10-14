@@ -7,6 +7,8 @@ import { setServices as setUiPrefsServices, useUiPrefsStore } from '../src/featu
 import { setServices as setReaderSettingsServices, useReaderSettingsStore } from '../src/features/settings/readerSettingsStore';
 import { initHeadlessEngine } from '../src/core/reader/headlessEngine';
 import { HeadlessEngineView } from '../src/features/reader/HeadlessEngineView';
+import { DialogHost } from '../src/ui/DialogHost';
+import { ToastHost } from '../src/ui/ToastHost';
 
 export default function RootLayout() {
   const [services, setServicesState] = useState<AppServices | null>(null);
@@ -27,6 +29,8 @@ export default function RootLayout() {
     <ServicesProvider value={services}>
       <HeadlessEngineView />
       <Stack screenOptions={{ headerShown: false }} />
+      <DialogHost />
+      <ToastHost />
     </ServicesProvider>
   );
 }

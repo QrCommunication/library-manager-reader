@@ -1,8 +1,8 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react-native';
-import { Alert } from 'react-native';
 import { LibraryScreen } from '../LibraryScreen';
 import { ServicesProvider } from '../../../core/services';
+import { DialogHost } from '../../../ui/DialogHost';
 import { initI18n } from '../../../i18n';
 
 jest.mock('expo-router', () => {
@@ -13,10 +13,6 @@ jest.mock('expo-router', () => {
     // every render would loop forever because refresh() sets a new array each time)
     useFocusEffect: (cb: () => void) => React.useEffect(() => { cb(); }, [cb]),
   };
-});
-
-jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-  (buttons?.find((b) => b.text === 'Confirmer') as { onPress?: () => void } | undefined)?.onPress?.();
 });
 
 jest.mock('expo-document-picker', () => ({
@@ -57,14 +53,14 @@ describe('LibraryScreen', () => {
 
   it('shows the empty state', async () => {
     const services = await makeServices();
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     expect(await screen.findByText('Bibliothèque')).toBeOnTheScreen();
     expect(await screen.findByText('Votre bibliothèque est vide')).toBeOnTheScreen();
   });
 
   it('opens the remote spaces sheet from the library title and offers sign-in when not connected', async () => {
     const services = await makeServices();
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     fireEvent.press(await screen.findByLabelText('library-manager.com'));
     expect(await screen.findByText('Connectez-vous à library-manager.com pour retrouver vos espaces')).toBeOnTheScreen();
     expect(screen.getByText('Ouvrir les réglages')).toBeOnTheScreen();
@@ -98,14 +94,55 @@ describe('LibraryScreen', () => {
     });
     const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as unknown as typeof fetch);
     try {
-      await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+      await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
       fireEvent.press(await screen.findByLabelText('library-manager.com'));
       fireEvent.press(await screen.findByText('Perso'));
       // the remote book renders as a tile; the matched one carries the badge…
       expect(await screen.findByLabelText('Serveur — Dans la bibliothèque')).toBeOnTheScreen();
       // …and the upload section is gone (uploads moved to the book long-press menu)
       expect(screen.queryByText('Locaux absents du serveur (1)')).toBeNull();
-      expect(screen.getByText('Synchroniser l’avancement')).toBeOnTheScreen();
+      expect(screen.getByLabelText('Synchroniser l’avancement')).toBeOnTheScreen();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('searches the server through /books/search when typing a keyword', async () => {
+    const services = await makeServices();
+    const { LM_TOKEN_KEYS } = require('../../../core/remote/lmTokens');
+    const SecureStore = require('expo-secure-store');
+    await SecureStore.setItemAsync(LM_TOKEN_KEYS.access, 'tok');
+    await SecureStore.setItemAsync(LM_TOKEN_KEYS.refresh, 'rt');
+    await SecureStore.setItemAsync(LM_TOKEN_KEYS.expiresAt, String(Date.now() + 3600_000));
+    const fetchMock = jest.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.endsWith('/api/v1/mobile/spaces')) {
+        return new Response(JSON.stringify([{ id: 's1', name: 'Perso', role: 'owner' }]), { status: 200 });
+      }
+      if (u.includes('/books/search?')) {
+        return new Response(JSON.stringify({
+          items: [{ id: 'rb9', title: 'Verne', author: 'Jules Verne', series: null, seriesIndex: null, updatedAt: 1 }],
+          nextCursor: null,
+          total: null,
+        }), { status: 200 });
+      }
+      if (u.includes('/api/v1/mobile/spaces/s1/books?')) {
+        return new Response(JSON.stringify({ items: [], nextCursor: null, total: 0 }), { status: 200 });
+      }
+      return new Response('nope', { status: 404 });
+    });
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as unknown as typeof fetch);
+    try {
+      await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
+      fireEvent.press(await screen.findByLabelText('library-manager.com'));
+      fireEvent.press(await screen.findByText('Perso'));
+      await screen.findByText('Aucun livre à afficher');
+      fireEvent.changeText(await screen.findByPlaceholderText('Rechercher sur le serveur…'), 'verne');
+      // debounced: the search route is queried with the encoded keyword
+      expect(await screen.findByText('Verne')).toBeOnTheScreen();
+      await waitFor(() => {
+        expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/books/search?') && String(u).includes('q=verne'))).toBe(true);
+      });
     } finally {
       fetchSpy.mockRestore();
     }
@@ -119,7 +156,7 @@ describe('LibraryScreen', () => {
     await SecureStore.setItemAsync(LM_TOKEN_KEYS.access, 'tok');
     await SecureStore.setItemAsync(LM_TOKEN_KEYS.refresh, 'rt');
     await SecureStore.setItemAsync(LM_TOKEN_KEYS.expiresAt, String(Date.now() + 3600_000));
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     fireEvent(await screen.findByText('LocalOnly'), 'longPress');
     expect(await screen.findByText('Envoyer vers library-manager.com')).toBeOnTheScreen();
   });
@@ -127,7 +164,7 @@ describe('LibraryScreen', () => {
   it('hides the server upload action when not signed in', async () => {
     const services = await makeServices();
     await services.books.createBook({ title: 'LocalOnly', author: null, format: 'epub', originalFormat: null, fileName: 'l.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     fireEvent(await screen.findByText('LocalOnly'), 'longPress');
     expect(await screen.findByText('Ouvrir')).toBeOnTheScreen();
     expect(screen.queryByText('Envoyer vers library-manager.com')).toBeNull();
@@ -138,10 +175,11 @@ describe('LibraryScreen', () => {
     const remove = jest.fn(async (_p: string) => {});
     services.fs.remove = remove;
     const b = await services.books.createBook({ title: 'Dune', author: 'F. Herbert', format: 'epub', originalFormat: null, fileName: 'd.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     expect(await screen.findByText('Dune')).toBeOnTheScreen();
     fireEvent(await screen.findByText('Dune'), 'longPress');
     fireEvent.press(await screen.findByText('Supprimer'));
+    fireEvent.press(await screen.findByText('Confirmer'));
     await waitFor(async () => {
       expect(screen.queryByText('Dune')).toBeNull();
       expect((await services.books.listDeleted()).map((x: { id: string }) => x.id)).toEqual([b.id]);
@@ -157,7 +195,7 @@ describe('LibraryScreen', () => {
     await mk('Tome 2', 'Fondation', 2, 1);
     await mk('Tome 1', 'Fondation', 1, 2);
     await mk('Standalone', null, null, 3);
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     // default sort is 'recent': newest addedAt first
     expect(gridTitles()).toEqual(['Standalone', 'Tome 1', 'Tome 2']);
     fireEvent.press(await screen.findByText('Série'));
@@ -172,7 +210,7 @@ describe('LibraryScreen', () => {
     await mk('Fondation T2', 'Fondation', 2);
     await mk('Dune', 'Dune', 1);
     await mk('Standalone', null, null);
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     expect(await screen.findByText('Dune')).toBeOnTheScreen();
     // the chips row is gone: series selection lives only in the sheet
     expect(screen.queryByText('Dune (1)')).toBeNull();
@@ -199,7 +237,7 @@ describe('LibraryScreen', () => {
   it('shows the empty hint in the series sheet when no series exists', async () => {
     const services = await makeServices();
     await services.books.createBook({ title: 'Standalone', author: null, format: 'epub', originalFormat: null, fileName: 's.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     fireEvent.press(await screen.findByLabelText('Séries'));
     expect(await screen.findByText('Aucune série détectée')).toBeOnTheScreen();
   });
@@ -213,7 +251,7 @@ describe('LibraryScreen', () => {
     const a = await mk('Aaa');
     const b = await mk('Bbb');
     const c = await mk('Ccc');
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     // enter selection from the long-press menu
     fireEvent(await screen.findByText('Aaa'), 'longPress');
     fireEvent.press(await screen.findByText('Sélectionner'));
@@ -221,7 +259,8 @@ describe('LibraryScreen', () => {
     fireEvent.press(await screen.findByText('Bbb'));
     fireEvent.press(await screen.findByText('Ccc'));
     fireEvent.press(await screen.findByText('3 sélectionné(s)'));
-    fireEvent.press(await screen.findByLabelText('Supprimer (3)')); // Alert confirm auto-fires
+    fireEvent.press(await screen.findByLabelText('Supprimer (3)'));
+    fireEvent.press(await screen.findByText('Confirmer'));
     await waitFor(async () => {
       const deleted = await services.books.listDeleted();
       expect(deleted.map((x: { id: string }) => x.id).sort()).toEqual([a.id, b.id, c.id].sort());
@@ -233,7 +272,7 @@ describe('LibraryScreen', () => {
   it('exits selection without deleting via the cancel control', async () => {
     const services = await makeServices();
     await services.books.createBook({ title: 'Aaa', author: null, format: 'epub', originalFormat: null, fileName: 'a.epub', fileSize: 1, language: null, publisher: null, series: null, seriesIndex: null, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     fireEvent(await screen.findByText('Aaa'), 'longPress');
     fireEvent.press(await screen.findByText('Sélectionner'));
     fireEvent.press(await screen.findByLabelText('Quitter la sélection'));
@@ -247,7 +286,7 @@ describe('LibraryScreen', () => {
       services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series, seriesIndex: index, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
     const dune = await mk('Dune', null, null);
     await mk('Fondation T1', 'Fondation', 1);
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     fireEvent(await screen.findByText('Dune'), 'longPress');
     fireEvent.press(await screen.findByText('Modifier'));
     const sheet = within(await screen.findByTestId('metadata-edit-sheet'));
@@ -266,7 +305,7 @@ describe('LibraryScreen', () => {
     const services = await makeServices();
     mockPicker.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///x/Book.epub' }] });
     mockGetEngine.mockImplementation(() => { throw new Error('headless engine not initialised'); });
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     fireEvent.press(await screen.findByText('Ajouter des livres'));
     expect(await screen.findByText('Import terminé')).toBeOnTheScreen();
     expect(await screen.findByText(/headless engine not initialised/)).toBeOnTheScreen();
@@ -277,7 +316,7 @@ describe('LibraryScreen', () => {
     services.fs.copy = async () => { throw new Error('EIO: copy failed'); };
     mockPicker.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///x/Book.epub' }] });
     mockGetEngine.mockReturnValue({ extract: jest.fn() });
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     fireEvent.press(await screen.findByText('Ajouter des livres'));
     expect(await screen.findByText('Import terminé')).toBeOnTheScreen();
     expect(await screen.findByText(/EIO: copy failed/)).toBeOnTheScreen();
@@ -291,7 +330,7 @@ describe('LibraryScreen', () => {
       extract: () => (call < gates.length ? gates[call++]!.promise : Promise.reject(new Error('no gate'))),
     });
     mockPicker.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///x/A.epub' }, { uri: 'file:///x/B.epub' }] });
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><LibraryScreen /><DialogHost /></></ServicesProvider>);
     fireEvent.press(await screen.findByText('Ajouter des livres'));
     // nothing reported yet: neither file finished
     expect(screen.queryByText('Importation 1/2…')).not.toBeOnTheScreen();

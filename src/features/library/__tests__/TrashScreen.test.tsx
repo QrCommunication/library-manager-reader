@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
 import { TrashScreen } from '../TrashScreen';
+import { DialogHost } from '../../../ui/DialogHost';
 import { ServicesProvider } from '../../../core/services';
 import { initI18n } from '../../../i18n';
 
@@ -9,9 +9,6 @@ jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
 }));
 
-jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-  (buttons?.find((b) => b.text === 'Confirmer') as { onPress?: () => void } | undefined)?.onPress?.();
-});
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -45,7 +42,7 @@ describe('TrashScreen', () => {
   it('lists tombstoned books with days left and restores them to the library', async () => {
     const services = await makeServices();
     const b = await deletedBook(services, 'Dune', Date.now());
-    await render(<ServicesProvider value={services}><TrashScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><TrashScreen /><DialogHost /></></ServicesProvider>);
     expect(await screen.findByText('Dune')).toBeOnTheScreen();
     expect(screen.getByText('Encore 30 j')).toBeOnTheScreen();
     fireEvent.press(screen.getByLabelText('Restaurer'));
@@ -58,8 +55,9 @@ describe('TrashScreen', () => {
     const remove = jest.fn(async (_p: string) => {});
     services.fs.remove = remove;
     const b = await deletedBook(services, 'Dune', Date.now());
-    await render(<ServicesProvider value={services}><TrashScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><TrashScreen /><DialogHost /></></ServicesProvider>);
     fireEvent.press(await screen.findByLabelText('Supprimer définitivement'));
+    fireEvent.press(await screen.findByText('Confirmer'));
     await waitFor(() => expect(screen.queryByText('Dune')).toBeNull());
     expect(await services.books.getBook(b.id)).toBeNull();
     expect(remove).toHaveBeenCalledWith(services.paths.bookPath(b.id, 'epub'));
@@ -72,8 +70,9 @@ describe('TrashScreen', () => {
     services.fs.remove = remove;
     const a = await deletedBook(services, 'Aaa', Date.now());
     const b = await deletedBook(services, 'Bbb', Date.now());
-    await render(<ServicesProvider value={services}><TrashScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><TrashScreen /><DialogHost /></></ServicesProvider>);
     fireEvent.press(await screen.findByText('Vider la corbeille'));
+    fireEvent.press(await screen.findByText('Confirmer'));
     await waitFor(async () => {
       expect(await services.books.getBook(a.id)).toBeNull();
       expect(await services.books.getBook(b.id)).toBeNull();
@@ -87,14 +86,14 @@ describe('TrashScreen', () => {
     const remove = jest.fn(async (_p: string) => {});
     services.fs.remove = remove;
     const b = await deletedBook(services, 'Old', Date.now() - 31 * DAY);
-    await render(<ServicesProvider value={services}><TrashScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><TrashScreen /><DialogHost /></></ServicesProvider>);
     await waitFor(async () => expect(await services.books.getBook(b.id)).toBeNull());
     expect(remove).toHaveBeenCalledWith(services.paths.bookPath(b.id, 'epub'));
   });
 
   it('shows the empty state when nothing is deleted', async () => {
     const services = await makeServices();
-    await render(<ServicesProvider value={services}><TrashScreen /></ServicesProvider>);
+    await render(<ServicesProvider value={services}><><TrashScreen /><DialogHost /></></ServicesProvider>);
     expect(await screen.findByText('La corbeille est vide')).toBeOnTheScreen();
   });
 });

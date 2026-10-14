@@ -130,7 +130,19 @@ export type LmCover =
   | { kind: 'unmodified' }
   | { kind: 'none' };
 
-export interface LmBookDetails { id: string; title: string; author: string | null; versions: LmVersion[] }
+export interface LmBookDetails {
+  id: string;
+  title: string;
+  author: string | null;
+  versions: LmVersion[];
+  /** catalogue metadata, present when the server has them */
+  series?: string | null;
+  description?: string | null;
+  publisher?: string | null;
+  language?: string | null;
+  genres?: string[] | null;
+  tags?: string[] | null;
+}
 export interface LmPage<T> { items: T[]; nextCursor: string | null; total: number }
 export interface LmDownload {
   versionId: string;
@@ -201,10 +213,28 @@ export class LmClient {
     return Array.isArray(data) ? data : (data.spaces ?? []);
   }
 
-  listBooks(spaceId: string, opts: { pageSize?: number; cursor?: string | null } = {}): Promise<LmPage<LmBook>> {
+  /** catalogue page; search= is the keyword filter of the catalogue route */
+  listBooks(spaceId: string, opts: { pageSize?: number; cursor?: string | null; search?: string; series?: string | null } = {}): Promise<LmPage<LmBook>> {
     const params = new URLSearchParams({ pageSize: String(opts.pageSize ?? 50) });
     if (opts.cursor) params.set('cursor', opts.cursor);
+    if (opts.search) params.set('search', opts.search);
+    if (opts.series) params.set('series', opts.series);
     return this.call(`/api/v1/mobile/spaces/${spaceId}/books?${params.toString()}`).then((r) => r.json());
+  }
+
+  /**
+   * keyword search on the dedicated /books/search route (q required, 1..512
+   * chars; total is null there). LibraryQuery filters ride along (series,
+   * sort, direction); continuation keeps every parameter and adds the cursor.
+   */
+  searchBooks(spaceId: string, opts: { q: string; pageSize?: number; cursor?: string | null; series?: string | null; sort?: string; direction?: string }): Promise<LmPage<LmBook>> {
+    const params = new URLSearchParams({ pageSize: String(opts.pageSize ?? 50) });
+    params.set('q', opts.q);
+    if (opts.cursor) params.set('cursor', opts.cursor);
+    if (opts.series) params.set('series', opts.series);
+    if (opts.sort) params.set('sort', opts.sort);
+    if (opts.direction) params.set('direction', opts.direction);
+    return this.call(`/api/v1/mobile/spaces/${spaceId}/books/search?${params.toString()}`).then((r) => r.json());
   }
 
   getBook(spaceId: string, bookId: string): Promise<LmBookDetails> {
