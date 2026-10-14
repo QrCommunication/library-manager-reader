@@ -126,13 +126,11 @@ export interface UiPrefs {
   koreaderUsername: string;
   koreaderUserkey: string;
   koreaderDeviceId: string;
-  // library-manager.com account: OAuth password grant exchanged once for a
-  // bearer token (refresh token kept for silent renewal), raw password never
-  // persisted
+  // library-manager.com account: display name only. The OAuth tokens live in
+  // Keychain/Keystore (lmTokens.ts, spec §10) and never enter the prefs store.
   lmUsername: string;
-  lmAccessToken: string;
-  lmRefreshToken: string;
-  lmTokenExpiresAt: number;
+  // stable per-installation UUID carried by progress ops and copy confirmations
+  lmInstallationId: string;
 }
 
 export const DEFAULT_UI_PREFS: UiPrefs = {
@@ -148,7 +146,5 @@ export const DEFAULT_UI_PREFS: UiPrefs = {
   koreaderUserkey: '',
   koreaderDeviceId: '',
   lmUsername: '',
-  lmAccessToken: '',
-  lmRefreshToken: '',
-  lmTokenExpiresAt: 0,
+  lmInstallationId: '',
 };
