@@ -19,8 +19,9 @@ const makeServices = async () => {
 
 const fakeFs = () => ({
   freeDiskBytes: async () => 1e9, ensureDir: async () => {}, copy: async () => {}, exists: async () => true,
-  remove: async () => {}, fileSize: async () => 100, writeBase64: async () => {}, readBase64Chunks: async () => {},
-  directorySize: async () => 0,
+  remove: async () => {}, fileSize: async () => 100, writeBase64: async () => {}, writeText: async () => {},
+  readBase64Chunks: async () => {}, directorySize: async () => 0,
+  readRange: async () => null, readText: async () => '',
 });
 
 describe('AnnotationsPanel', () => {

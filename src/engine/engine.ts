@@ -92,9 +92,9 @@ const toToc = (items: unknown): TocItem[] =>
 
 const cssFor = (s: ReaderSettings): string => {
   const themes = {
-    day: { bg: '#FFFFFF', fg: '#1A1A1A', link: '#2D6CDF' },
+    day: { bg: '#FFFFFF', fg: '#1A1A1A', link: '#17263D' },
     sepia: { bg: '#F4ECD8', fg: '#3B2F1E', link: '#8B5E34' },
-    night: { bg: '#101314', fg: '#D7DBDC', link: '#7FB4C9' },
+    night: { bg: '#101314', fg: '#D7DBDC', link: '#8FA8CE' },
   } as const;
   // defensive: the app resolves 'auto' before applySettings, but if an 'auto'
   // theme ever reached the engine it must not break — fall back to day

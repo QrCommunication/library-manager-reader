@@ -25,6 +25,18 @@ describe('settingsRepo', () => {
     expect(await repo.getUiPrefs()).toEqual({ ...DEFAULT_UI_PREFS, language: 'fr', defaultTheme: 'sepia' });
   });
 
+  it('ships KOSync defaults and round-trips the KOReader account fields', async () => {
+    const repo = await setup();
+    const prefs = await repo.getUiPrefs();
+    expect(prefs.koreaderServer).toBe('https://sync.koreader.rocks');
+    expect(prefs.koreaderUsername).toBe('');
+    expect(prefs.koreaderUserkey).toBe('');
+    expect(prefs.koreaderDeviceId).toBe('');
+    const saved = { ...prefs, koreaderUsername: 'benoit', koreaderUserkey: 'abc123', koreaderDeviceId: 'dev-9' };
+    await repo.putUiPrefs(saved);
+    expect(await repo.getUiPrefs()).toEqual(saved);
+  });
+
   it('never lets a stored row override the shipped LibreTranslate server', async () => {
     // every pre-#17 build persisted libreTranslateUrl 'https://libretranslate.com'
     // with an empty key whenever the user saved any pref (theme, language…);

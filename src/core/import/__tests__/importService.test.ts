@@ -29,6 +29,7 @@ const makeFs = () => {
 const baseDeps = (fs: ReturnType<typeof makeFs>, over: Record<string, unknown> = {}) => ({
   fs: fs as never,
   paths: {
+    root: '/doc',
     booksDir: '/doc/books', coversDir: '/doc/covers',
     bookPath: (id: string, ext: string) => `/doc/books/${id}.${ext}`,
     coverPath: (id: string) => `/doc/covers/${id}.jpg`,

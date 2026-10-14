@@ -25,14 +25,16 @@ export function themeTokens(theme: ThemeName): ThemeTokens {
     case 'night':
       return {
         background: '#101314', foreground: '#D7DBDC', muted: '#8A9296',
-        accent: '#7FB4C9', chrome: '#1A1F21', border: '#2A3134',
+        accent: '#8FA8CE', chrome: '#1A1F21', border: '#2A3134',
         danger: '#E6B0AA', onAccent: '#101314',
       };
     default:
       return {
-        background: '#FAFAF8', foreground: '#1C1B1A', muted: '#6B6963',
-        accent: '#2D6CDF', chrome: '#FFFFFF', border: '#E4E2DD',
-        danger: '#C0392B', onAccent: '#FFFFFF',
+        // identity palette from the Library Manager logo: navy #17263D +
+        // light gray #E5EAF0; supporting grays cooled to match
+        background: '#F7F8FA', foreground: '#1C2430', muted: '#66707D',
+        accent: '#17263D', chrome: '#FFFFFF', border: '#DDE2E9',
+        danger: '#C0392B', onAccent: '#E5EAF0',
       };
   }
 }

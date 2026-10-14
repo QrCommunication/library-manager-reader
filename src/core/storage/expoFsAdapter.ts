@@ -12,6 +12,7 @@ export function createExpoFsAdapter(): FsAdapter {
     async remove(path) { const f = new File(path); if (f.exists) f.delete(); },
     async fileSize(path) { return new File(path).size; },
     async writeBase64(path, b64) { new File(path).write(new Uint8Array(decode(b64))); },
+    async writeText(path, text) { new File(path).write(text); },
     async readBase64Chunks(path, chunkSize, onChunk) {
       const size = new File(path).size;
       for (let pos = 0; pos < size; pos += chunkSize) {
@@ -20,6 +21,17 @@ export function createExpoFsAdapter(): FsAdapter {
         await onChunk(b64);
       }
     },
+    async readRange(path, offset, length) {
+      const f = new File(path);
+      if (!f.exists || offset >= f.size) return null;
+      const b64 = await readAsStringAsync(path, {
+        position: offset,
+        length: Math.min(length, f.size - offset),
+        encoding: EncodingType.Base64,
+      });
+      return new Uint8Array(decode(b64));
+    },
+    async readText(path) { return readAsStringAsync(path, { encoding: EncodingType.UTF8 }); },
     async directorySize(path) {
       const dir = new Directory(path);
       if (!dir.exists) return 0;
