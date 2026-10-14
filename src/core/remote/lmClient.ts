@@ -17,13 +17,11 @@ export class LmError extends Error {
 
 export interface LmTokens { accessToken: string; refreshToken: string; expiresAt: number }
 
-/** OAuth password grant: user+password exchanged once for a bearer token */
-export async function lmLogin(
-  creds: { username: string; password: string },
-  fetchImpl: typeof fetch = globalThis.fetch,
-  baseUrl: string = LM_BASE_URL,
-): Promise<LmTokens> {
-  const body = new URLSearchParams({ grant_type: 'password', username: creds.username, password: creds.password });
+const tokenRequest = async (
+  body: URLSearchParams,
+  fetchImpl: typeof fetch,
+  baseUrl: string,
+): Promise<LmTokens> => {
   let res: Response;
   try {
     res = await fetchImpl(`${baseUrl}/api/oauth/token`, {
@@ -42,7 +40,27 @@ export async function lmLogin(
     refreshToken: data.refresh_token ?? '',
     expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
   };
-}
+};
+
+/** OAuth password grant: user+password exchanged once for a bearer token */
+export const lmLogin = (
+  creds: { username: string; password: string },
+  fetchImpl: typeof fetch = globalThis.fetch,
+  baseUrl: string = LM_BASE_URL,
+): Promise<LmTokens> =>
+  tokenRequest(
+    new URLSearchParams({ grant_type: 'password', username: creds.username, password: creds.password }),
+    fetchImpl,
+    baseUrl,
+  );
+
+/** silent renewal of an expired bearer token */
+export const lmRefresh = (
+  creds: { refreshToken: string },
+  fetchImpl: typeof fetch = globalThis.fetch,
+  baseUrl: string = LM_BASE_URL,
+): Promise<LmTokens> =>
+  tokenRequest(new URLSearchParams({ grant_type: 'refresh_token', refresh_token: creds.refreshToken }), fetchImpl, baseUrl);
 
 export interface LmSpace { id: string; name: string; booksCount: number }
 export interface LmBook {

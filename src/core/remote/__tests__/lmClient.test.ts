@@ -1,4 +1,4 @@
-import { createLmClient, LmError, lmLogin, LM_BASE_URL } from '../lmClient';
+import { createLmClient, LmError, lmLogin, lmRefresh, LM_BASE_URL } from '../lmClient';
 
 const okJson = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 
@@ -24,6 +24,25 @@ describe('lmLogin — OAuth password grant', () => {
       .rejects.toMatchObject({ kind: 'auth' });
     await expect(lmLogin({ username: 'u', password: 'p' }, async () => { throw new TypeError('offline'); }))
       .rejects.toMatchObject({ kind: 'network' });
+  });
+});
+
+describe('lmRefresh — refresh_token grant', () => {
+  it('exchanges a refresh token for a new token pair', async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return okJson({ access_token: 'at-2', refresh_token: 'rt-2', expires_in: 7200 });
+    };
+    const out = await lmRefresh({ refreshToken: 'rt-1' }, fetchImpl);
+    expect(out).toEqual({ accessToken: 'at-2', refreshToken: 'rt-2', expiresAt: expect.any(Number) });
+    expect(String(calls[0]!.init.body)).toContain('grant_type=refresh_token');
+    expect(String(calls[0]!.init.body)).toContain('refresh_token=rt-1');
+  });
+
+  it('maps failures like the password grant', async () => {
+    await expect(lmRefresh({ refreshToken: 'bad' }, async () => new Response('nope', { status: 400 })))
+      .rejects.toMatchObject({ kind: 'auth' });
   });
 });
 
