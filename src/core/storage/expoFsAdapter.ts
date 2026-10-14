@@ -20,6 +20,17 @@ export function createExpoFsAdapter(): FsAdapter {
         await onChunk(b64);
       }
     },
+    async readRange(path, offset, length) {
+      const f = new File(path);
+      if (!f.exists || offset >= f.size) return null;
+      const b64 = await readAsStringAsync(path, {
+        position: offset,
+        length: Math.min(length, f.size - offset),
+        encoding: EncodingType.Base64,
+      });
+      return new Uint8Array(decode(b64));
+    },
+    async readText(path) { return readAsStringAsync(path, { encoding: EncodingType.UTF8 }); },
     async directorySize(path) {
       const dir = new Directory(path);
       if (!dir.exists) return 0;
