@@ -19,7 +19,6 @@ import { ImportResultsSheet, type ImportOutcome } from './ImportResultsSheet';
 import { MetadataEditSheet } from './MetadataEditSheet';
 import { getHeadlessEngine } from '../../core/reader/headlessEngine';
 import { purgeExpiredTrash } from '../../core/library/trashService';
-import { enrichSeriesFromOpenLibrary, refreshLibraryMetadata } from '../../core/library/metadataRefresh';
 import { buildExportEntries, zipEntries } from '../../core/library/exportService';
 import { storedFormat } from '../../core/library/fileMeta';
 import { saveBytesToUserDir, EXPORT_MIME } from '../../core/storage/saf';
@@ -50,7 +49,6 @@ export function LibraryScreen() {
   const [seriesSheet, setSeriesSheet] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const selectionMode = selection.size > 0;
-  const [refreshingMeta, setRefreshingMeta] = useState(false);
   const { books, seriesList, progressMap, refresh } = useBooks(sort, query, seriesFilter);
   const { columns } = useWindowLayout();
 
@@ -186,6 +184,21 @@ export function LibraryScreen() {
     }
   };
 
+  // whole library: every non-deleted book regardless of the active filters
+  const exportLibrary = async () => {
+    try {
+      const all = await services.books.listBooks({ sort: 'added' });
+      if (all.length === 0) return;
+      const zip = zipEntries(await buildExportEntries(exportDeps(), all));
+      const stamp = new Date().toISOString().slice(0, 10);
+      const saved = await saveBytesToUserDir(`library-reader-export-${stamp}.zip`, EXPORT_MIME.zip!, zip);
+      if (saved) Alert.alert(t('library.exportAll'), t('library.export.done'));
+    } catch (err) {
+      console.warn('[library] export failed', err);
+      Alert.alert(t('library.exportAll'), t('library.export.failed'));
+    }
+  };
+
   const toggleSelect = (id: string) =>
     setSelection((cur) => {
       const next = new Set(cur);
@@ -211,50 +224,6 @@ export function LibraryScreen() {
     ]);
   };
 
-  const refreshMeta = async () => {
-    if (refreshingMeta || importing) return;
-    setRefreshingMeta(true);
-    setProgress({ done: 0, total: 0 });
-    try {
-      const deps = { fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine() };
-      const results = await refreshLibraryMetadata(deps, (p) => setProgress(p));
-      const enriched = await enrichSeriesFromOpenLibrary(deps, fetch, (p) => setProgress(p));
-      const updated = results.filter((r) => r.updated).length;
-      const series = enriched.filter((r) => r.updated).length;
-      const failed = results.filter((r) => !r.updated && r.detail).length + enriched.filter((r) => r.detail).length;
-      Alert.alert(t('library.refreshDone'), t('library.refreshSummary', { updated, series, failed }));
-      await refresh();
-    } catch (err) {
-      Alert.alert(t('library.refreshDone'), err instanceof Error ? err.message : String(err));
-    } finally {
-      setRefreshingMeta(false);
-      setProgress(null);
-    }
-  };
-
-  // selection-scoped variant: re-extracts only the picked books (no Open
-  // Library pass — filling series is the whole-library button's job)
-  const bulkRefreshMeta = async () => {
-    if (refreshingMeta || importing) return;
-    const ids = [...selection];
-    setRefreshingMeta(true);
-    setProgress({ done: 0, total: ids.length });
-    try {
-      const deps = { fs: services.fs, paths: services.paths, books: services.books, extractor: getHeadlessEngine() };
-      const results = await refreshLibraryMetadata(deps, (p) => setProgress(p), ids);
-      const updated = results.filter((r) => r.updated).length;
-      const failed = results.length - updated;
-      Alert.alert(t('library.refreshDone'), t('library.refreshSummary', { updated, series: 0, failed }));
-      setSelection(new Set());
-      await refresh();
-    } catch (err) {
-      Alert.alert(t('library.refreshDone'), err instanceof Error ? err.message : String(err));
-    } finally {
-      setRefreshingMeta(false);
-      setProgress(null);
-    }
-  };
-
   return (
     <View style={[styles.root, { backgroundColor: t0.background, paddingTop: insets.top }]}>
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
@@ -262,14 +231,14 @@ export function LibraryScreen() {
         <Text style={[styles.title, { color: t0.foreground }]}>{t('library.title')}</Text>
         <View style={styles.titleActions}>
           <Pressable
-            onPress={() => void refreshMeta()}
-            accessibilityLabel={t('library.refreshMeta')}
+            onPress={() => void exportLibrary()}
+            accessibilityLabel={t('library.exportAll')}
             accessibilityRole="button"
             hitSlop={12}
-            disabled={importing || refreshingMeta}
-            style={[styles.iconButton, { borderColor: t0.border, opacity: importing || refreshingMeta ? 0.4 : 1 }]}
+            disabled={importing}
+            style={[styles.iconButton, { borderColor: t0.border, opacity: importing ? 0.4 : 1 }]}
           >
-            <Ionicons name="sync-outline" size={20} color={t0.foreground} />
+            <Ionicons name="archive-outline" size={20} color={t0.foreground} />
           </Pressable>
           <Pressable
             onPress={() => setSeriesSheet(true)}
@@ -330,25 +299,18 @@ export function LibraryScreen() {
             <Ionicons name="close" size={22} color={t0.foreground} />
           </Pressable>
           <Text style={[styles.selectionCount, { color: t0.foreground }]}>{t('library.selected', { count: selection.size })}</Text>
-          <Pressable onPress={() => void bulkRefreshMeta()} hitSlop={8} disabled={refreshingMeta}>
-            <Text style={[styles.selectionRefresh, { color: t0.foreground, opacity: refreshingMeta ? 0.4 : 1 }]}>
-              {t('library.refreshSelected')}
-            </Text>
+          <Pressable onPress={() => void exportSelected()} accessibilityLabel={t('library.exportSelected')} accessibilityRole="button" hitSlop={8} style={styles.selectionAction}>
+            <Ionicons name="download-outline" size={22} color={t0.foreground} />
           </Pressable>
-          <Pressable onPress={() => void exportSelected()} hitSlop={8}>
-            <Text style={[styles.selectionRefresh, { color: t0.foreground }]}>{t('library.exportSelected')}</Text>
-          </Pressable>
-          <Pressable onPress={bulkDelete} hitSlop={8}>
-            <Text style={[styles.selectionDelete, { color: t0.danger }]}>{t('library.deleteSelected', { count: selection.size })}</Text>
+          <Pressable onPress={bulkDelete} accessibilityLabel={t('library.deleteSelected', { count: selection.size })} accessibilityRole="button" hitSlop={8} style={styles.selectionAction}>
+            <Ionicons name="trash-outline" size={22} color={t0.danger} />
           </Pressable>
         </View>
       ) : null}
-      {(importing || refreshingMeta) && progress ? (
+      {importing && progress ? (
         <View style={[styles.importBanner, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
           <Text style={[styles.importText, { color: t0.foreground }]}>
-            {importing
-              ? t('library.importing', { done: progress.done, total: progress.total })
-              : t('library.refreshingMeta', { done: progress.done, total: progress.total })}
+            {t('library.importing', { done: progress.done, total: progress.total })}
           </Text>
           <View style={styles.importTrack}>
             <View style={{ flex: progress.total > 0 ? progress.done / progress.total : 0, backgroundColor: t0.accent, borderRadius: 2 }} />
@@ -518,8 +480,7 @@ const styles = StyleSheet.create({
     borderRadius: 12, borderWidth: 1, paddingHorizontal: 12, height: 44, marginBottom: 10,
   },
   selectionCount: { flex: 1, fontSize: 14, fontWeight: '700' },
-  selectionRefresh: { fontSize: 14, fontWeight: '700' },
-  selectionDelete: { fontSize: 14, fontWeight: '700' },
+  selectionAction: { paddingHorizontal: 4 },
   grid: { paddingBottom: 96, gap: 4 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingBottom: 60 },
   emptyGlyphWrap: { width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
