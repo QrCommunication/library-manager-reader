@@ -20,6 +20,9 @@ import { MetadataEditSheet } from './MetadataEditSheet';
 import { getHeadlessEngine } from '../../core/reader/headlessEngine';
 import { purgeExpiredTrash } from '../../core/library/trashService';
 import { enrichSeriesFromOpenLibrary, refreshLibraryMetadata } from '../../core/library/metadataRefresh';
+import { buildExportEntries, zipEntries } from '../../core/library/exportService';
+import { storedFormat } from '../../core/library/fileMeta';
+import { saveBytesToUserDir, EXPORT_MIME } from '../../core/storage/saf';
 import { seedIfEmpty } from '../../dev/seed';
 import { parseSidecar, serializeSidecar } from '../../core/progress/koreaderSidecar';
 import { syncBookProgress, applyServerProgress, pushLocalProgress, type BookSyncDeps } from '../../core/progress/koreaderSyncService';
@@ -207,6 +210,43 @@ export function LibraryScreen() {
     }
   };
 
+  const exportDeps = () => ({
+    fs: services.fs,
+    paths: services.paths,
+    getProgress: (id: string) => services.progress.getProgress(id),
+  });
+
+  // single book: the renamed file goes straight to the chosen folder
+  const exportBook = async (book: Book) => {
+    try {
+      const entries = await buildExportEntries(exportDeps(), [book]);
+      const saved = await saveBytesToUserDir(entries[0]!.path, EXPORT_MIME[storedFormat(book)] ?? 'application/octet-stream', entries[0]!.data);
+      if (saved) Alert.alert(t('library.menu.exportBook'), t('library.export.done'));
+    } catch (err) {
+      console.warn('[library] export failed', err);
+      Alert.alert(t('library.menu.exportBook'), t('library.export.failed'));
+    }
+  };
+
+  // selection: one zip of renamed books + KOReader sidecars
+  const exportSelected = async () => {
+    const ids = new Set(selection);
+    const picked = books.filter((b) => ids.has(b.id));
+    if (picked.length === 0) return;
+    try {
+      const zip = zipEntries(await buildExportEntries(exportDeps(), picked));
+      const stamp = new Date().toISOString().slice(0, 10);
+      const saved = await saveBytesToUserDir(`library-reader-export-${stamp}.zip`, EXPORT_MIME.zip!, zip);
+      if (saved) {
+        setSelection(new Set());
+        Alert.alert(t('library.exportSelected'), t('library.export.done'));
+      }
+    } catch (err) {
+      console.warn('[library] export failed', err);
+      Alert.alert(t('library.exportSelected'), t('library.export.failed'));
+    }
+  };
+
   const toggleSelect = (id: string) =>
     setSelection((cur) => {
       const next = new Set(cur);
@@ -356,6 +396,9 @@ export function LibraryScreen() {
               {t('library.refreshSelected')}
             </Text>
           </Pressable>
+          <Pressable onPress={() => void exportSelected()} hitSlop={8}>
+            <Text style={[styles.selectionRefresh, { color: t0.foreground }]}>{t('library.exportSelected')}</Text>
+          </Pressable>
           <Pressable onPress={bulkDelete} hitSlop={8}>
             <Text style={[styles.selectionDelete, { color: t0.danger }]}>{t('library.deleteSelected', { count: selection.size })}</Text>
           </Pressable>
@@ -479,6 +522,10 @@ export function LibraryScreen() {
             <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void syncWithKoreader(b); }}>
               <Ionicons name="sync-outline" size={20} color={t0.foreground} />
               <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.kosync')}</Text>
+            </Pressable>
+            <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void exportBook(b); }}>
+              <Ionicons name="save-outline" size={20} color={t0.foreground} />
+              <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.exportBook')}</Text>
             </Pressable>
             <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void exportSidecar(b); }}>
               <Ionicons name="share-outline" size={20} color={t0.foreground} />

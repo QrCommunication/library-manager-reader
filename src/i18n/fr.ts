@@ -18,8 +18,13 @@ export const fr = {
       info: 'Informations',
       delete: 'Supprimer',
       kosync: 'Synchroniser avec KOReader',
+      exportBook: 'Exporter le livre',
       exportSidecar: 'Exporter la position (.sdr)',
       importSidecar: 'Importer la position (.sdr)',
+    },
+    export: {
+      done: 'Fichier enregistré',
+      failed: 'L’export a échoué',
     },
     kosync: {
       none: 'Aucune position enregistrée',
@@ -53,6 +58,7 @@ export const fr = {
     refreshDone: 'Métadonnées mises à jour',
     refreshSummary: '{{updated}} livre(s) mis à jour · {{series}} série(s) complétée(s) · {{failed}} échec(s)',
     refreshSelected: 'Mettre à jour la sélection',
+    exportSelected: 'Exporter la sélection',
     edit: 'Modifier',
     editTitle: 'Modifier les métadonnées',
     fieldTitle: 'Titre',

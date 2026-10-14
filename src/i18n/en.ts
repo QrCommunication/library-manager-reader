@@ -18,8 +18,13 @@ export const en = {
       info: 'Info',
       delete: 'Delete',
       kosync: 'Sync with KOReader',
+      exportBook: 'Export book',
       exportSidecar: 'Export position (.sdr)',
       importSidecar: 'Import position (.sdr)',
+    },
+    export: {
+      done: 'File saved',
+      failed: 'Export failed',
     },
     kosync: {
       none: 'No saved position',
@@ -53,6 +58,7 @@ export const en = {
     refreshDone: 'Metadata updated',
     refreshSummary: '{{updated}} book(s) updated · {{series}} series filled · {{failed}} failure(s)',
     refreshSelected: 'Update selection',
+    exportSelected: 'Export selection',
     edit: 'Edit',
     editTitle: 'Edit metadata',
     fieldTitle: 'Title',
