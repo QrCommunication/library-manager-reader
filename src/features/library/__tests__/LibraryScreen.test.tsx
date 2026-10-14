@@ -88,7 +88,7 @@ describe('LibraryScreen', () => {
     await waitFor(() => expect(gridTitles()).toEqual(['Tome 1', 'Tome 2', 'Standalone']));
   });
 
-  it('filters the grid through the series chips and toggles back', async () => {
+  it('filters the grid from the series sheet and toggles the filter off there', async () => {
     const services = await makeServices();
     const mk = (title: string, series: string | null, index: number | null) =>
       services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series, seriesIndex: index, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
@@ -98,38 +98,26 @@ describe('LibraryScreen', () => {
     await mk('Standalone', null, null);
     await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
     expect(await screen.findByText('Dune')).toBeOnTheScreen();
-    // chip labels carry a count ("Fondation (2)"), distinct from book titles
-    fireEvent.press(screen.getByText('Fondation (2)'));
-    expect(await screen.findByText('Fondation T1')).toBeOnTheScreen();
-    expect(screen.getByText('Fondation T2')).toBeOnTheScreen();
-    await waitFor(() => expect(screen.queryByText('Dune')).toBeNull());
-    expect(screen.queryByText('Standalone')).toBeNull();
-    fireEvent.press(screen.getByText('Fondation (2)'));
-    expect(await screen.findByText('Dune')).toBeOnTheScreen();
-    await waitFor(() => expect(screen.getByText('Standalone')).toBeOnTheScreen());
-  });
-
-  it('lists detected series in a sheet and filters the grid from it', async () => {
-    const services = await makeServices();
-    const mk = (title: string, series: string | null, index: number | null) =>
-      services.books.createBook({ title, author: null, format: 'epub', originalFormat: null, fileName: `${title}.epub`, fileSize: 1, language: null, publisher: null, series, seriesIndex: index, drmIdentifier: null, addedAt: 1, updatedAt: 1, deletedAt: null, lastReadAt: null });
-    await mk('Fondation T1', 'Fondation', 1);
-    await mk('Fondation T2', 'Fondation', 2);
-    await mk('Dune', 'Dune', 1);
-    await mk('Standalone', null, null);
-    await render(<ServicesProvider value={services}><LibraryScreen /></ServicesProvider>);
+    // the chips row is gone: series selection lives only in the sheet
+    expect(screen.queryByText('Dune (1)')).toBeNull();
+    expect(screen.queryByText('Fondation (2)')).toBeNull();
     fireEvent.press(await screen.findByLabelText('Séries'));
     const sheet = within(await screen.findByTestId('series-sheet'));
     // every detected series is listed with its tome count
     expect(sheet.getByText('Fondation')).toBeOnTheScreen();
     expect(sheet.getByText('Dune')).toBeOnTheScreen();
-    fireEvent.press(sheet.getByText('Dune'));
+    await fireEvent.press(sheet.getByText('Dune'));
     // picking a series closes the sheet and filters the grid
     await waitFor(() => expect(screen.queryByTestId('series-sheet')).toBeNull());
     expect(await screen.findByText('Dune')).toBeOnTheScreen();
     await waitFor(() => expect(screen.queryByText('Fondation T1')).toBeNull());
-    fireEvent.press(screen.getByText('Dune (1)')); // chip clears the filter
+    expect(screen.queryByText('Standalone')).toBeNull();
+    // tapping the filtered series again clears the filter
+    fireEvent.press(await screen.findByLabelText('Séries'));
+    await fireEvent.press(await within(await screen.findByTestId('series-sheet')).getByText('Dune'));
+    await waitFor(() => expect(screen.queryByTestId('series-sheet')).toBeNull());
     expect(await screen.findByText('Fondation T1')).toBeOnTheScreen();
+    await waitFor(() => expect(screen.getByText('Standalone')).toBeOnTheScreen());
   });
 
   it('shows the empty hint in the series sheet when no series exists', async () => {
