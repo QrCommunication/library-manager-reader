@@ -4,13 +4,15 @@ import { Ionicons } from '@expo/vector-icons';
 import type { Book } from '../../core/types';
 import { themeTokens } from '../../theme/tokens';
 
-export function BookGridItem({ book, coverUri, onPress, onLongPress, selectionMode = false, selected = false }: {
+export function BookGridItem({ book, coverUri, onPress, onLongPress, selectionMode = false, selected = false, progress }: {
   book: Book;
   coverUri: string;
   onPress(): void;
   onLongPress(): void;
   selectionMode?: boolean;
   selected?: boolean;
+  /** 0..1 reading fraction, undefined when the book was never opened */
+  progress?: number;
 }) {
   const t = themeTokens(useColorScheme() === 'dark' ? 'night' : 'day');
   const [coverFailed, setCoverFailed] = useState(false);
@@ -42,11 +44,19 @@ export function BookGridItem({ book, coverUri, onPress, onLongPress, selectionMo
             <Ionicons name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={24} color={selected ? '#4C8DFF' : '#FFFFFF'} />
           </View>
         ) : null}
+        {progress != null ? (
+          <View style={s.progressTrack}>
+            <View style={[s.progressFill, { width: `${Math.round(Math.min(1, Math.max(0, progress)) * 100)}%`, backgroundColor: t.accent }]} />
+          </View>
+        ) : null}
       </View>
       <Text numberOfLines={2} style={[s.title, { color: t.foreground }]}>{book.title}</Text>
       {book.author ? <Text numberOfLines={1} style={[s.author, { color: t.muted }]}>{book.author}</Text> : null}
       {book.series && book.series !== book.title ? (
         <Text numberOfLines={1} style={[s.series, { color: t.muted }]}>{book.series}</Text>
+      ) : null}
+      {progress != null ? (
+        <Text style={[s.progressText, { color: t.muted }]}>{`${Math.round(Math.min(1, Math.max(0, progress)) * 100)} %`}</Text>
       ) : null}
     </Pressable>
   );
@@ -63,7 +73,10 @@ const s = StyleSheet.create({
   },
   tomeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
   checkWrap: { position: 'absolute', top: 6, left: 6 },
+  progressTrack: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, backgroundColor: '#00000033' },
+  progressFill: { height: 3 },
   title: { marginTop: 6, fontSize: 14, fontWeight: '600', textAlign: 'center' },
   author: { marginTop: 2, fontSize: 12, textAlign: 'center' },
   series: { marginTop: 1, fontSize: 11, fontStyle: 'italic', textAlign: 'center' },
+  progressText: { marginTop: 2, fontSize: 10, fontWeight: '700', fontVariant: ['tabular-nums'] },
 });

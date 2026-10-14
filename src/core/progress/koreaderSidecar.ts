@@ -17,7 +17,7 @@ const unescapeLua = (s: string): string =>
 
 const asString = (v: string): string | null => {
   const m = /^"((?:[^"\\]|\\.)*)"$/.exec(v);
-  return m ? unescapeLua(m[1]) : null;
+  return m ? unescapeLua(m[1]!) : null;
 };
 
 const asNumber = (v: string): number | null => {
@@ -44,8 +44,8 @@ export function parseSidecar(lua: string): KoReaderProgress | null {
     if (CLOSING_BRACE.test(line)) { inDocProps = false; continue; }
     const m = KEY_LINE.exec(line);
     if (!m) continue;
-    const key = unescapeLua(m[1]);
-    const value = m[2].trim();
+    const key = unescapeLua(m[1]!);
+    const value = m[2]!.trim();
     if (inDocProps) {
       if (key === 'title') title = asString(value) ?? title;
       else if (key === 'authors') authors = asString(value) ?? authors;

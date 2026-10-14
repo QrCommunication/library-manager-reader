@@ -16,7 +16,7 @@ export async function partialMd5Hex(
   for (const offset of SAMPLE_OFFSETS) {
     const sample = await readAt(offset, 1024);
     if (!sample || sample.length === 0) break;
-    md5.append(sample.buffer.slice(sample.byteOffset, sample.byteOffset + sample.byteLength));
+    md5.append(sample.buffer.slice(sample.byteOffset, sample.byteOffset + sample.byteLength) as ArrayBuffer);
   }
   return md5.end();
 }
@@ -43,5 +43,5 @@ const utf8Bytes = (text: string): Uint8Array => {
 // the KOSync protocol never sends the raw password — only this md5 (userkey)
 export function md5Hex(text: string): string {
   const bytes = utf8Bytes(text);
-  return SparkMD5.ArrayBuffer.hash(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  return SparkMD5.ArrayBuffer.hash(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
 }

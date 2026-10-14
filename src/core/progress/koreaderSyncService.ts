@@ -1,6 +1,6 @@
 import { partialMd5Hex } from './partialMd5';
 import type { KoSyncClient } from './koreaderSync';
-import type { ReadingProgress } from '../../types';
+import type { ReadingProgress } from '../types';
 
 export interface BookSyncDeps {
   readAt(path: string, offset: number, length: number): Promise<Uint8Array | null>;

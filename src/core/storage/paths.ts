@@ -1,6 +1,7 @@
 import type { OriginalFormat } from '../types';
 
 export interface StoragePaths {
+  root: string;
   booksDir: string; coversDir: string;
   bookPath(id: string, ext: string): string; coverPath(id: string): string;
   ensureAll(): Promise<void>;
@@ -19,6 +20,7 @@ export function createStoragePaths(root: string, fs: { ensureDir(path: string): 
   const booksDir = `${root}/books`;
   const coversDir = `${root}/covers`;
   return {
+    root,
     booksDir, coversDir,
     bookPath: (id, ext) => `${booksDir}/${id}.${ext}`,
     coverPath: (id) => `${coversDir}/${id}.jpg`,

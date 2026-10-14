@@ -7,8 +7,9 @@ import { createReaderSettingsStore } from '../readerSettingsStore';
 
 const fakeFs = {
   freeDiskBytes: async () => 1e9, ensureDir: async () => {}, copy: async () => {}, exists: async () => false,
-  remove: async () => {}, fileSize: async () => 0, writeBase64: async () => {},
+  remove: async () => {}, fileSize: async () => 0, writeBase64: async () => {}, writeText: async () => {},
   readBase64Chunks: async () => {}, directorySize: async () => 0,
+  readRange: async () => null, readText: async () => '',
 };
 
 describe('readerSettingsStore', () => {

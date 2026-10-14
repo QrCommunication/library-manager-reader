@@ -1,6 +1,6 @@
 import { uuidV7 } from '../uuid';
 import { createKoSyncClient, type KoSyncClient } from './koreaderSync';
-import type { UiPrefs } from '../../types';
+import type { UiPrefs } from '../types';
 
 export const KO_SYNC_DEVICE = 'Library Reader';
 

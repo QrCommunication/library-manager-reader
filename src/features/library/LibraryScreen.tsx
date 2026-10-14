@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme, useWindowDimensions } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Sharing from 'expo-sharing';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,6 +21,10 @@ import { getHeadlessEngine } from '../../core/reader/headlessEngine';
 import { purgeExpiredTrash } from '../../core/library/trashService';
 import { enrichSeriesFromOpenLibrary, refreshLibraryMetadata } from '../../core/library/metadataRefresh';
 import { seedIfEmpty } from '../../dev/seed';
+import { parseSidecar, serializeSidecar } from '../../core/progress/koreaderSidecar';
+import { syncBookProgress, applyServerProgress, pushLocalProgress, type BookSyncDeps } from '../../core/progress/koreaderSyncService';
+import { KoSyncError, type KoSyncClient } from '../../core/progress/koreaderSync';
+import { isKoSyncConfigured, koSyncClientFromPrefs } from '../../core/progress/koSyncAccount';
 
 const SORTS: SortKey[] = ['recent', 'added', 'title', 'series'];
 
@@ -46,7 +51,7 @@ export function LibraryScreen() {
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const selectionMode = selection.size > 0;
   const [refreshingMeta, setRefreshingMeta] = useState(false);
-  const { books, seriesList, refresh } = useBooks(sort, query, seriesFilter);
+  const { books, seriesList, progressMap, refresh } = useBooks(sort, query, seriesFilter);
   const { columns } = useWindowLayout();
 
   // trash retention sweep: expired tombstones (and their files) go for good
@@ -90,6 +95,116 @@ export function LibraryScreen() {
     await services.books.markDeleted(book.id, Date.now());
     setMenuBook(null);
     await refresh();
+  };
+
+  const kosyncDeps = (client: KoSyncClient): BookSyncDeps => ({
+    readAt: (path, offset, length) => services.fs.readRange(path, offset, length),
+    getProgress: (id) => services.progress.getProgress(id),
+    saveProgress: (p) => services.progress.saveProgress(p),
+    client,
+  });
+
+  const kosyncErrorMessage = (err: unknown): string => {
+    if (!(err instanceof KoSyncError)) return t('library.kosync.failed');
+    if (err.kind === 'network') return t('library.kosync.network');
+    if (err.kind === 'auth') return t('library.kosync.authFailed');
+    return t('library.kosync.failed');
+  };
+
+  const syncWithKoreader = async (book: Book) => {
+    const prefs = await services.settings.getUiPrefs();
+    if (!isKoSyncConfigured(prefs)) {
+      Alert.alert(t('library.menu.kosync'), t('library.kosync.needAccount'));
+      return;
+    }
+    try {
+      const client = await koSyncClientFromPrefs(services.settings);
+      const deps = kosyncDeps(client);
+      const result = await syncBookProgress(deps, book, services.paths.bookPath(book.id, book.format));
+      if (result.kind === 'pulled') await refresh();
+      if (result.kind === 'none') Alert.alert(t('library.menu.kosync'), t('library.kosync.none'));
+      else if (result.kind === 'in_sync') Alert.alert(t('library.menu.kosync'), t('library.kosync.inSync'));
+      else if (result.kind === 'pulled') Alert.alert(t('library.menu.kosync'), t('library.kosync.pulled'));
+      else if (result.kind === 'pushed') Alert.alert(t('library.menu.kosync'), t('library.kosync.pushed'));
+      else {
+        const pct = (f: number) => Math.round(f * 100);
+        Alert.alert(
+          t('library.kosync.conflictTitle'),
+          t('library.kosync.conflict', { server: pct(result.server), local: pct(result.local) }),
+          [
+            { text: t('common.cancel') },
+            {
+              text: t('library.kosync.useServer', { percent: pct(result.server) }),
+              onPress: () => void (async () => {
+                await applyServerProgress(deps, book.id, { percentage: result.server, timestamp: null });
+                await refresh();
+              })(),
+            },
+            {
+              text: t('library.kosync.useLocal', { percent: pct(result.local) }),
+              onPress: () => void (async () => {
+                const local = await services.progress.getProgress(book.id);
+                if (local) await pushLocalProgress(deps, result.digest, local);
+              })(),
+            },
+          ],
+        );
+      }
+    } catch (err) {
+      Alert.alert(t('library.menu.kosync'), kosyncErrorMessage(err));
+    }
+  };
+
+  const exportSidecar = async (book: Book) => {
+    try {
+      const local = await services.progress.getProgress(book.id);
+      if (!local) {
+        Alert.alert(t('library.menu.exportSidecar'), t('library.sidecar.none'));
+        return;
+      }
+      const slug = book.title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'book';
+      const dir = `${services.paths.root}/export/${slug}.sdr`;
+      await services.fs.ensureDir(dir);
+      const path = `${dir}/metadata.${book.format}.lua`;
+      await services.fs.writeText(path, serializeSidecar({
+        percentFinished: local.fraction,
+        lastRead: Math.floor(local.updatedAt / 1000),
+        title: book.title,
+        authors: book.author,
+        language: book.language,
+      }));
+      await Sharing.shareAsync(path, { mimeType: 'application/octet-stream' });
+      Alert.alert(t('library.menu.exportSidecar'), t('library.sidecar.exported'));
+    } catch (err) {
+      console.warn('[library] sidecar export failed', err);
+      Alert.alert(t('library.menu.exportSidecar'), t('library.sidecar.exportFailed'));
+    }
+  };
+
+  const importSidecar = async (book: Book) => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ multiple: false, type: '*/*', copyToCacheDirectory: true });
+      const uri = result.canceled ? null : result.assets[0]?.uri;
+      if (!uri) return;
+      const text = await services.fs.readText(uri);
+      const parsed = parseSidecar(text);
+      if (!parsed) {
+        Alert.alert(t('library.menu.importSidecar'), t('library.sidecar.invalid'));
+        return;
+      }
+      await services.progress.saveProgress({
+        bookId: book.id,
+        cfi: null,
+        fraction: parsed.percentFinished,
+        sectionIndex: null,
+        updatedAt: parsed.lastRead !== null ? parsed.lastRead * 1000 : Date.now(),
+      });
+      await refresh();
+      Alert.alert(t('library.menu.importSidecar'), t('library.sidecar.imported'));
+    } catch (err) {
+      console.warn('[library] sidecar import failed', err);
+      Alert.alert(t('library.menu.importSidecar'), t('library.sidecar.invalid'));
+    }
   };
 
   const toggleSelect = (id: string) =>
@@ -287,6 +402,7 @@ export function LibraryScreen() {
               coverUri={`${services.paths.coverPath(item.id)}`}
               selectionMode={selectionMode}
               selected={selection.has(item.id)}
+              progress={progressMap.get(item.id)}
               onPress={() => (selectionMode ? toggleSelect(item.id) : router.push(`/book/${item.id}`))}
               onLongPress={() => (selectionMode ? toggleSelect(item.id) : setMenuBook(item))}
             />
@@ -359,6 +475,18 @@ export function LibraryScreen() {
             <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); setEditBook(b); }}>
               <Ionicons name="create-outline" size={20} color={t0.foreground} />
               <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.edit')}</Text>
+            </Pressable>
+            <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void syncWithKoreader(b); }}>
+              <Ionicons name="sync-outline" size={20} color={t0.foreground} />
+              <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.kosync')}</Text>
+            </Pressable>
+            <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void exportSidecar(b); }}>
+              <Ionicons name="share-outline" size={20} color={t0.foreground} />
+              <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.exportSidecar')}</Text>
+            </Pressable>
+            <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); void importSidecar(b); }}>
+              <Ionicons name="download-outline" size={20} color={t0.foreground} />
+              <Text style={[styles.sheetRowText, { color: t0.foreground }]}>{t('library.menu.importSidecar')}</Text>
             </Pressable>
             <Pressable style={styles.sheetRow} onPress={() => { const b = menuBook!; setMenuBook(null); setSelection(new Set([b.id])); }}>
               <Ionicons name="checkbox-outline" size={20} color={t0.foreground} />

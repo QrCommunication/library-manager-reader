@@ -60,30 +60,30 @@ const localProgress = (fraction: number): ReadingProgress =>
 describe('syncBookProgress', () => {
   it('reports none when neither side has progress', async () => {
     const { deps } = makeDeps();
-    expect(await syncBookProgress(deps, { id: 'b1', fileName: 'b.epub' }, '/books/b.epub')).toEqual({ kind: 'none' });
+    expect(await syncBookProgress(deps, { id: 'b1' }, '/books/b.epub')).toEqual({ kind: 'none' });
   });
 
   it('pushes the local position when the server has none', async () => {
     const { deps, calls } = makeDeps({ local: localProgress(0.25) });
-    expect(await syncBookProgress(deps, { id: 'b1', fileName: 'b.epub' }, '/books/b.epub')).toEqual({ kind: 'pushed', fraction: 0.25 });
+    expect(await syncBookProgress(deps, { id: 'b1' }, '/books/b.epub')).toEqual({ kind: 'pushed', fraction: 0.25 });
     expect(calls.some((c) => c.startsWith('put:25.0:0.25'))).toBe(true);
   });
 
   it('pulls the server position when the book has none locally', async () => {
     const { deps, calls } = makeDeps({ server: serverProgress(0.5) });
-    expect(await syncBookProgress(deps, { id: 'b1', fileName: 'b.epub' }, '/books/b.epub')).toEqual({ kind: 'pulled', fraction: 0.5 });
+    expect(await syncBookProgress(deps, { id: 'b1' }, '/books/b.epub')).toEqual({ kind: 'pulled', fraction: 0.5 });
     // cfi is dropped: a KOReader percentage cannot resolve to our cfis
     expect(calls).toContain('save:0.5:null:1700000000000');
   });
 
   it('reports in_sync when both sides agree', async () => {
     const { deps } = makeDeps({ server: serverProgress(0.4), local: localProgress(0.4) });
-    expect(await syncBookProgress(deps, { id: 'b1', fileName: 'b.epub' }, '/books/b.epub')).toEqual({ kind: 'in_sync' });
+    expect(await syncBookProgress(deps, { id: 'b1' }, '/books/b.epub')).toEqual({ kind: 'in_sync' });
   });
 
   it('surfaces a conflict (with the digest) when the positions diverge', async () => {
     const { deps } = makeDeps({ server: serverProgress(0.8), local: localProgress(0.2) });
-    const r = await syncBookProgress(deps, { id: 'b1', fileName: 'b.epub' }, '/books/b.epub');
+    const r = await syncBookProgress(deps, { id: 'b1' }, '/books/b.epub');
     expect(r).toMatchObject({ kind: 'conflict', server: 0.8, local: 0.2 });
     expect((r as { digest: string }).digest).toMatch(/^[0-9a-f]{32}$/);
   });

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View, useColorScheme } from 'react-native';
+import { Alert, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,10 @@ import { formatBytes } from '../../core/format';
 import type { LanguagePref, ThemeName } from '../../core/types';
 import { initI18n } from '../../i18n';
 import { themeTokens } from '../../theme/tokens';
+import { md5Hex } from '../../core/progress/partialMd5';
+import { createKoSyncClient, KoSyncError } from '../../core/progress/koreaderSync';
+import { KO_SYNC_DEVICE } from '../../core/progress/koSyncAccount';
+import { uuidV7 } from '../../core/uuid';
 import { useUiPrefsStore } from './uiPrefsStore';
 import { useReaderSettingsStore } from './readerSettingsStore';
 
@@ -51,10 +55,54 @@ export function SettingsScreen() {
   const t0 = themeTokens(dark ? 'night' : 'day');
   const insets = useSafeAreaInsets();
   const [storageBytes, setStorageBytes] = useState<number | null>(null);
+  // null = untouched field, falls back to the persisted prefs (the userkey is
+  // the only stored secret, the raw password is never kept)
+  const [koServer, setKoServer] = useState<string | null>(null);
+  const [koUsername, setKoUsername] = useState<string | null>(null);
+  const [koPassword, setKoPassword] = useState('');
+  const [koBusy, setKoBusy] = useState(false);
+  const server = koServer ?? prefs.koreaderServer;
+  const username = koUsername ?? prefs.koreaderUsername;
 
   useEffect(() => {
     void useUiPrefsStore.getState().hydrate();
   }, []);
+
+  const koConnect = async (mode: 'login' | 'create') => {
+    const serverTrimmed = server.trim();
+    const usernameTrimmed = username.trim();
+    if (!serverTrimmed || !usernameTrimmed || !koPassword) {
+      Alert.alert(t('settings.koreader.title'), t('settings.koreader.needFields'));
+      return;
+    }
+    setKoBusy(true);
+    try {
+      const userkey = md5Hex(koPassword);
+      const client = createKoSyncClient(
+        { baseUrl: serverTrimmed, username: usernameTrimmed, userkey, device: KO_SYNC_DEVICE, deviceId: prefs.koreaderDeviceId || uuidV7() },
+        fetch,
+      );
+      if (mode === 'create') {
+        if ((await client.register()) === 'exists') {
+          Alert.alert(t('settings.koreader.title'), t('settings.koreader.createExists'));
+          return;
+        }
+      } else if (!(await client.authorize())) {
+        Alert.alert(t('settings.koreader.title'), t('settings.koreader.badCredentials'));
+        return;
+      }
+      await update({ koreaderServer: serverTrimmed, koreaderUsername: usernameTrimmed, koreaderUserkey: userkey });
+      setKoPassword('');
+      Alert.alert(t('settings.koreader.title'), t(mode === 'create' ? 'settings.koreader.createOk' : 'settings.koreader.loginOk'));
+    } catch (err) {
+      const msg = err instanceof KoSyncError && err.kind === 'network'
+        ? t('settings.koreader.network')
+        : t('settings.koreader.error');
+      Alert.alert(t('settings.koreader.title'), msg);
+    } finally {
+      setKoBusy(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -134,6 +182,54 @@ export function SettingsScreen() {
         })}
       </View>
 
+      <Text style={[styles.sectionTitle, { color: t0.foreground }]}>{t('settings.koreader.title')}</Text>
+      <Text style={[styles.sectionHint, { color: t0.muted }]}>{t('settings.koreader.hint')}</Text>
+      <TextInput
+        style={[styles.input, { borderColor: t0.border, color: t0.foreground }]}
+        placeholder={t('settings.koreader.server')}
+        placeholderTextColor={t0.muted}
+        value={server}
+        onChangeText={setKoServer}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+      />
+      <TextInput
+        style={[styles.input, { borderColor: t0.border, color: t0.foreground }]}
+        placeholder={t('settings.koreader.username')}
+        placeholderTextColor={t0.muted}
+        value={username}
+        onChangeText={setKoUsername}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+      <TextInput
+        style={[styles.input, { borderColor: t0.border, color: t0.foreground }]}
+        placeholder={t('settings.koreader.password')}
+        placeholderTextColor={t0.muted}
+        value={koPassword}
+        onChangeText={setKoPassword}
+        autoCapitalize="none"
+        autoCorrect={false}
+        secureTextEntry
+      />
+      <View style={styles.buttonRow}>
+        <Pressable
+          style={[styles.actionButton, { borderColor: t0.accent }, koBusy && { opacity: 0.4 }]}
+          disabled={koBusy}
+          onPress={() => { void koConnect('login'); }}
+        >
+          <Text style={[styles.actionButtonText, { color: t0.accent }]}>{t('settings.koreader.login')}</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.actionButton, { borderColor: t0.accent }, koBusy && { opacity: 0.4 }]}
+          disabled={koBusy}
+          onPress={() => { void koConnect('create'); }}
+        >
+          <Text style={[styles.actionButtonText, { color: t0.accent }]}>{t('settings.koreader.create')}</Text>
+        </Pressable>
+      </View>
+
       <View style={[styles.infoRow, { borderColor: t0.border }]}>
         <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.storage')}</Text>
         <Text style={[styles.infoValue, { color: t0.muted }]}>{storageBytes === null ? null : formatBytes(storageBytes, lang)}</Text>
@@ -164,4 +260,10 @@ const styles = StyleSheet.create({
   targetChipText: { fontSize: 14 },
   infoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1 },
   infoValue: { fontSize: 15, fontVariant: ['tabular-nums'] },
+  sectionTitle: { fontSize: 18, fontWeight: '700', marginTop: 12 },
+  sectionHint: { fontSize: 13 },
+  input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15 },
+  buttonRow: { flexDirection: 'row', gap: 8 },
+  actionButton: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
+  actionButtonText: { fontSize: 14, fontWeight: '600' },
 });

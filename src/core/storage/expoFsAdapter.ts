@@ -12,6 +12,7 @@ export function createExpoFsAdapter(): FsAdapter {
     async remove(path) { const f = new File(path); if (f.exists) f.delete(); },
     async fileSize(path) { return new File(path).size; },
     async writeBase64(path, b64) { new File(path).write(new Uint8Array(decode(b64))); },
+    async writeText(path, text) { new File(path).write(text); },
     async readBase64Chunks(path, chunkSize, onChunk) {
       const size = new File(path).size;
       for (let pos = 0; pos < size; pos += chunkSize) {
