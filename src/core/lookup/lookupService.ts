@@ -30,7 +30,7 @@ const WIKTIONARY_UA = 'LibraryManagerReader/1.0 (https://github.com/QrCommunicat
 // Supported entity set: decode exactly one layer per pass (String.replace never
 // re-scans its own output, so "&amp;lt;" becomes "&lt;", not "<").
 const ENTITIES: Record<string, string> = {
-  '&nbsp;': ' ',
+  '&nbsp;': '\u00A0',
   '&amp;': '&',
   '&lt;': '<',
   '&gt;': '>',
@@ -39,7 +39,14 @@ const ENTITIES: Record<string, string> = {
   '&apos;': '\'',
 };
 
-const decodeEntities = (s: string): string => s.replace(/&(?:nbsp|amp|lt|gt|quot|apos|#39);/g, (m) => ENTITIES[m] ?? m);
+const decodeEntities = (s: string): string => s
+  .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#39);/g, (m) => ENTITIES[m] ?? m)
+  // any numeric entity (e.g. &#160; nbsp, &#39;) — decoded to a real char or a
+  // space for out-of-range values; each pass strictly shrinks the string
+  .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => safeChar(parseInt(h, 16)))
+  .replace(/&#(\d+);/g, (_, d: string) => safeChar(Number(d)));
+
+const safeChar = (n: number): string => (n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : ' ');
 
 // Only well-formed tag-like sequences: "<" followed by a letter, "!", "/" or "?"
 // (prose such as "a < b" or "3 < 5 > 2" is left untouched).
@@ -58,7 +65,8 @@ const sanitizeHtml = (html: string): string => {
   // Backstop: drop any surviving "<" that could start a tag (e.g. a lone
   // "&lt;script" with no closing ">"), while keeping comparison prose intact.
   out = out.replace(/<(?=[A-Za-z!/?])/g, '');
-  return out.replace(/\s+/g, ' ').trim();
+  // collapse whitespace but keep NBSP (French typography: "Personne ; …")
+  return out.replace(/[^\S\u00A0]+/g, ' ').trim();
 };
 
 const clampGloss = (s: string): string => (s.length > GLOSS_MAX ? `${s.slice(0, GLOSS_MAX - 1)}…` : s);
@@ -88,10 +96,16 @@ function parseDefinitions(json: Record<string, unknown>): DefinitionSense[] {
 const MAX_SENSES = 8;
 const MAX_GLOSSES = 6;
 
+// h3/h4 headings that carry lists but no definitions (fr + en editions)
+const NON_POS_HEADING = /^(étymologie|etymology|sources?|références|references|notes?|prononciation|pronunciation|voir aussi|see also|annexes|bibliographie|bibliography|webographie|liens externes|external links|anagrammes|anagrams|paronymes|homophones|dérivés|derived terms|traductions|translations|synonymes|synonyms|antonymes|antonyms|hyponymes|hyperonymes|hypernyms|méronymes|holonymes|quasi-synonymes|vocabulaire apparenté par le sens|related terms|apparentés|proverbes et phrases toutes faites|flexion|conjugaison|déclinaison|inflection|conjugation|declension)\b/i;
+
 export function parseWiktionaryHtml(html: string): DefinitionSense[] {
   let clean = html;
   for (;;) {
-    const next = clean.replace(/<(ul|dl)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
+    const next = clean
+      .replace(/<(ul|dl)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+      // citation/reference lists (TLFi etc.) are not definitions
+      .replace(/<ol\b[^>]*class="[^"]*references[^"]*"[^>]*>[\s\S]*?<\/ol\s*>/gi, '');
     if (next === clean) break;
     clean = next;
   }
@@ -99,6 +113,7 @@ export function parseWiktionaryHtml(html: string): DefinitionSense[] {
     const senses: DefinitionSense[] = [];
     for (const h of [...sec[2]!.matchAll(/<h([34])\b[^>]*>([\s\S]*?)<\/h\1\s*>([\s\S]*?)(?=<h[34]\b|$)/gi)]) {
       const pos = stripTags(h[2]!).replace(/\s+/g, ' ').trim() || null;
+      if (pos && NON_POS_HEADING.test(pos)) continue;
       const glosses: string[] = [];
       for (const ol of [...h[3]!.matchAll(/<ol\b[^>]*>([\s\S]*?)<\/ol\s*>/gi)]) {
         for (const li of [...ol[1]!.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li\s*>/gi)]) {
