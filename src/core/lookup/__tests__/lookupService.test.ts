@@ -159,6 +159,46 @@ describe('lookupService gloss sanitization (entity-borne tag injection)', () => 
     const out = await firstGloss('3 < 5 &gt; 2');
     expect(out).toBe('3 < 5 > 2');
   });
+
+  it('decodes numeric entities like &#160; (French non-breaking space)', async () => {
+    const out = await firstGloss('Personne&#160;; de grand renom&#160;.');
+    expect(out).toBe('Personne\u00A0; de grand renom\u00A0.');
+    expect(out).not.toContain('&#');
+  });
+});
+
+describe('lookupService HTML fallback: references and non-POS sections', () => {
+  const htmlFor = (inner: string): string =>
+    '<div class="mw-heading mw-heading2"><h2 id="Français">Français</h2></div>'
+    + '<div class="mw-heading mw-heading3"><h3 id="Nom_commun">Nom commun</h3></div>'
+    + '<ol><li>Personne mise en action dans un ouvrage dramatique.</li></ol>'
+    + inner;
+
+  const sensesFor = async (inner: string) => {
+    const fetched = jest.fn()
+      .mockResolvedValueOnce(jsonResponse(501, { status: 501 }))
+      .mockResolvedValueOnce(jsonResponse(200, { parse: { title: 'w', text: htmlFor(inner) } }));
+    const service = createLookupService({ fetch: fetched as unknown as typeof fetch });
+    return service.define('w', 'en', 'fr');
+  };
+
+  it('drops <ol class="references"> blocks and never yields a Sources/Références sense', async () => {
+    const senses = await sensesFor(
+      '<div class="mw-heading mw-heading3"><h3 id="Sources">Sources</h3></div>'
+      + '<ol class="references"><li id="cite_note-1">↑ «&#160;w&#160;», dans&#160;TLFi, 1971–1994&#160;→ consulter</li></ol>',
+    );
+    expect(senses).toEqual([{ pos: 'Nom commun', glosses: ['Personne mise en action dans un ouvrage dramatique.'] }]);
+  });
+
+  it('skips non-POS headings (Étymologie, Prononciation, Voir aussi) even with lists', async () => {
+    const senses = await sensesFor(
+      '<div class="mw-heading mw-heading3"><h3 id="Étymologie">Étymologie</h3></div>'
+      + '<ol><li>(XI<sup>e</sup> siècle) Du latin persona.</li></ol>'
+      + '<div class="mw-heading mw-heading3"><h3 id="Prononciation">Prononciation</h3></div>'
+      + '<ol><li>/pɛʁ.sɔ.naʒ/</li></ol>',
+    );
+    expect(senses).toEqual([{ pos: 'Nom commun', glosses: ['Personne mise en action dans un ouvrage dramatique.'] }]);
+  });
 });
 
 describe('lookupService.translate', () => {
