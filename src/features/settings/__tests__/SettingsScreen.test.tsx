@@ -13,6 +13,11 @@ jest.mock('../../../core/storage/saf', () => ({
   saveBytesToUserDir: (...args: unknown[]) => (mockSave as (...a: unknown[]) => Promise<boolean>)(...args),
 }));
 
+jest.mock('react-native-webview', () => ({
+  __esModule: true,
+  default: () => null,
+}));
+
 // '../../../i18n' from this folder is src/i18n — the module SettingsScreen imports.
 // Only initI18n is mocked (the screen must not switch languages for real in tests);
 // everything else (resources…) passes through via requireActual.

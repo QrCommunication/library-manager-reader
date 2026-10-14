@@ -17,9 +17,8 @@ import { isKoSyncConfigured, koSyncClientFromPrefs, KO_SYNC_DEVICE } from '../..
 import { syncLibraryProgress } from '../../core/progress/koreaderSyncService';
 import { LmError } from '../../core/remote/lmClient';
 import { lmBeginSignIn, lmCompleteSignIn, lmDisconnect, lmIsConnected } from '../../core/remote/lmAccount';
-import { LM_REDIRECT_URI } from '../../core/remote/lmPkce';
 import { createLmAccountDeps } from '../../core/storage/expoSecureStore';
-import * as WebBrowser from 'expo-web-browser';
+import { LmAuthSheet } from './LmAuthSheet';
 import { uuidV7 } from '../../core/uuid';
 import { useUiPrefsStore } from './uiPrefsStore';
 import { useReaderSettingsStore } from './readerSettingsStore';
@@ -72,6 +71,7 @@ export function SettingsScreen() {
   const [koSyncing, setKoSyncing] = useState(false);
   const [lmConnected, setLmConnected] = useState(false);
   const [lmBusy, setLmBusy] = useState(false);
+  const [authUrl, setAuthUrl] = useState<string | null>(null);
   const [exportingAll, setExportingAll] = useState(false);
   const server = koServer ?? prefs.koreaderServer;
   const username = koUsername ?? prefs.koreaderUsername;
@@ -193,26 +193,35 @@ export function SettingsScreen() {
     return t('settings.lm.error');
   };
 
-  // PKCE through the system browser: the app only ever sees the callback code,
-  // the verifier stays in the secure store and the password never touches it
-  const lmConnect = async () => {
-    setLmBusy(true);
-    try {
-      const url = await lmBeginSignIn(lmAccount);
-      const res = await WebBrowser.openAuthSessionAsync(url, LM_REDIRECT_URI);
-      if (res.type !== 'success') {
-        Alert.alert(t('settings.lm.title'), t('settings.lm.cancelled'));
-        return;
+  // PKCE: the authorization runs in an in-app WebView (the server's callback
+  // page renders JSON instead of bouncing through verified App Links, so the
+  // system-browser session never hands control back). The app only ever sees
+  // the callback code; the verifier stays in the secure store.
+  const lmConnect = () => {
+    void (async () => {
+      try {
+        setAuthUrl(await lmBeginSignIn(lmAccount));
+      } catch (err) {
+        Alert.alert(t('settings.lm.title'), lmErrorMessage(err));
       }
-      await lmCompleteSignIn(lmAccount, res.url);
-      setLmConnected(true);
-      void useUiPrefsStore.getState().hydrate();
-      Alert.alert(t('settings.lm.title'), t('settings.lm.loginOk'));
-    } catch (err) {
-      Alert.alert(t('settings.lm.title'), lmErrorMessage(err));
-    } finally {
-      setLmBusy(false);
-    }
+    })();
+  };
+
+  const lmAuthComplete = (callbackUrl: string) => {
+    setAuthUrl(null);
+    void (async () => {
+      setLmBusy(true);
+      try {
+        await lmCompleteSignIn(lmAccount, callbackUrl);
+        setLmConnected(true);
+        void useUiPrefsStore.getState().hydrate();
+        Alert.alert(t('settings.lm.title'), t('settings.lm.loginOk'));
+      } catch (err) {
+        Alert.alert(t('settings.lm.title'), lmErrorMessage(err));
+      } finally {
+        setLmBusy(false);
+      }
+    })();
   };
 
   const lmLogout = async () => {
@@ -412,6 +421,13 @@ export function SettingsScreen() {
         <Text style={[styles.rowLabel, { color: t0.foreground }]}>{t('settings.about')}</Text>
         <Text style={[styles.infoValue, { color: t0.muted }]}>{version}</Text>
       </View>
+
+      <LmAuthSheet
+        visible={authUrl !== null}
+        url={authUrl ?? ''}
+        onClose={() => setAuthUrl(null)}
+        onComplete={lmAuthComplete}
+      />
     </ScrollView>
   );
 }
