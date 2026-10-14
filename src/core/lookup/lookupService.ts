@@ -23,6 +23,10 @@ export interface LookupService {
 
 const GLOSS_MAX = 300;
 
+// Wikimedia's User-Agent policy: generic library UAs (okhttp, the RN default on
+// Android) are blocked at the edge with 403 — a descriptive UA is required.
+const WIKTIONARY_UA = 'LibraryManagerReader/1.0 (https://github.com/QrCommunication/library-manager-reader)';
+
 // Supported entity set: decode exactly one layer per pass (String.replace never
 // re-scans its own output, so "&amp;lt;" becomes "&lt;", not "<").
 const ENTITIES: Record<string, string> = {
@@ -85,7 +89,7 @@ export function createLookupService(deps: LookupDeps = {}): LookupService {
     for (const sub of editions) {
       let res: Response;
       try {
-        res = await doFetch(`https://${sub}.wiktionary.org/api/rest_v1/page/definition/${encodeURIComponent(word)}`);
+        res = await doFetch(`https://${sub}.wiktionary.org/api/rest_v1/page/definition/${encodeURIComponent(word)}`, { headers: { 'User-Agent': WIKTIONARY_UA } });
       } catch {
         throw new LookupError('offline');
       }
