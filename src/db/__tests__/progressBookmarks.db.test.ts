@@ -28,6 +28,13 @@ describe('progressRepo', () => {
     expect(p?.cfi).toBe('c2');
     expect(p?.fraction).toBe(0.5);
   });
+
+  it('lists progress for every book that has one (library grid)', async () => {
+    const { progress } = await setup();
+    await progress.saveProgress({ bookId: 'fixed-book-id', cfi: 'c1', fraction: 0.25, sectionIndex: 1, updatedAt: 10 });
+    const all = await progress.listProgress();
+    expect(all).toEqual([{ bookId: 'fixed-book-id', cfi: 'c1', fraction: 0.25, sectionIndex: 1, updatedAt: 10 }]);
+  });
 });
 
 describe('bookmarksRepo', () => {
