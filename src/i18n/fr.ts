@@ -39,7 +39,7 @@ export const fr = {
       title: 'library-manager.com',
       needAccount: 'Connectez-vous à library-manager.com pour retrouver vos espaces',
       goSettings: 'Ouvrir les réglages',
-      onServer: 'Sur le serveur ({{count}})',
+      onServer: 'Sur le serveur ({{loaded}}/{{total}})',
       inLibrary: 'Dans la bibliothèque',
       transfer: 'Transférer vers la bibliothèque',
       transferAsk: 'Télécharger « {{title}} » depuis library-manager.com ?',
