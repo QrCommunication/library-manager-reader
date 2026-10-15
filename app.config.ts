@@ -3,7 +3,7 @@ export default {
     name: 'Library Reader',
     slug: 'library-reader',
     owner: 'ronylicha',
-    version: '0.6.0',
+    version: '0.6.5',
     // follow device orientation: Fold cover/inner transitions, tablets and
     // landscape phones are first-class layouts (reader reflows via foliate)
     orientation: 'default',
@@ -20,8 +20,8 @@ export default {
     },
     android: {
       package: 'com.librarymanager.reader',
-      // Google Play versionCode: app version without dots (0.6.0 -> 060)
-      versionCode: 60,
+      // Google Play versionCode: app version without dots (0.6.5 -> 065)
+      versionCode: 65,
       adaptiveIcon: { foregroundImage: './assets/adaptive-icon.png', backgroundColor: '#17263d' },
       intentFilters: [
         {

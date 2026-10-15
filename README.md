@@ -4,7 +4,7 @@
 
 E-book reader for Android and iOS, built with [Expo](https://expo.dev) and React Native. The library and reading work entirely offline, and an optional link to [library-manager.com](https://library-manager.com) and KOReader keeps positions in sync across devices.
 
-**Current version: 0.6.0** · package / bundle ID `com.librarymanager.reader` · license GPL-3.0
+**Current version: 0.6.5** · package / bundle ID `com.librarymanager.reader` · license GPL-3.0
 
 ## Contents
 
@@ -129,12 +129,12 @@ The app follows the **KOReader** position contract shared with Library Manager (
 
 ## Version history
 
-The repository has no tags yet. Releases are the `release/*` merges and the version bumps in `app.config.ts`.
+Each version is tagged `vX.Y.Z` and published as a [GitHub release](https://github.com/QrCommunication/library-manager-reader/releases) with the EAS builds (`.apk` for direct install, `.aab` for Google Play).
 
 | Version | versionCode | Highlights |
 |---|---|---|
-| **Unreleased** | — | **KOReader** reading contract (CREngine XPointer + percentage); exact-replay journal and explicit conflicts (DB v6); re-read at open and on return to the foreground; kosync with explicit choice; progress bar on covers; local-copy confirmation after an exact upload |
-| post-0.6.0 | 60 | Server-fed series autocomplete, bulk selection in the cloud catalogue, series filter fix and loaded/total count |
+| **0.6.5** | 65 | **KOReader** reading contract (CREngine XPointer + percentage); exact-replay journal and explicit conflicts (DB v6); re-read at open and on return to the foreground; kosync with explicit choice; progress bar on covers; local-copy confirmation after an exact upload |
+| 0.6.0+ | 60 | Server-fed series autocomplete, bulk selection in the cloud catalogue, series filter fix and loaded/total count |
 | **0.6.0** | 60 | Live two-way progress sync with an offline journal; themed dialogs and notifications everywhere; cloud sheet tools; redesigned settings |
 | **0.5.0** | 50 | Library Manager mobile API (PKCE, spaces, revisions, transfers), tokens in the Keychain, in-app sign-in, remote book grid, downloads and uploads, cloud covers |
 | 0.2.x | 20–23 | App icons and identity; KOReader (sidecars, partial MD5, kosync); progress in the grid; metadata written into files; ZIP export with sidecars; reorganized settings |

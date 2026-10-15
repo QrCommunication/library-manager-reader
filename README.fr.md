@@ -4,7 +4,7 @@
 
 Liseuse de livres numériques pour Android et iOS, construite avec [Expo](https://expo.dev) et React Native. La bibliothèque et la lecture fonctionnent entièrement hors ligne ; une liaison facultative avec [library-manager.com](https://library-manager.com) et KOReader synchronise la position de lecture entre appareils.
 
-**Version actuelle : 0.6.0** · paquet / bundle ID `com.librarymanager.reader` · licence GPL-3.0
+**Version actuelle : 0.6.5** · paquet / bundle ID `com.librarymanager.reader` · licence GPL-3.0
 
 ## Sommaire
 
@@ -129,12 +129,12 @@ L'application suit le format de position **KOReader**, commun au web, au mobile 
 
 ## Historique des versions
 
-Le dépôt n'a pas encore de tags. Les versions correspondent aux fusions `release/*` et aux changements de version dans `app.config.ts`.
+Chaque version est taguée `vX.Y.Z` et publiée en [release GitHub](https://github.com/QrCommunication/library-manager-reader/releases) avec les builds EAS (`.apk` pour l'installation directe, `.aab` pour Google Play).
 
 | Version | versionCode | Principaux ajouts |
 |---|---|---|
-| **Non publiée** | — | Format de lecture **KOReader** (XPointer CREngine + pourcentage) ; journal à rejeu exact et conflits explicites (DB v6) ; relecture à l'ouverture et au retour au premier plan ; kosync avec choix explicite ; barre d'avancement sur les couvertures ; confirmation de la copie locale après un envoi identique |
-| après 0.6.0 | 60 | Autocomplétion des séries fournie par le serveur, sélection multiple dans le catalogue cloud, correctif du filtre par série et compteur chargés/total |
+| **0.6.5** | 65 | Format de lecture **KOReader** (XPointer CREngine + pourcentage) ; journal à rejeu exact et conflits explicites (DB v6) ; relecture à l'ouverture et au retour au premier plan ; kosync avec choix explicite ; barre d'avancement sur les couvertures ; confirmation de la copie locale après un envoi identique |
+| 0.6.0+ | 60 | Autocomplétion des séries fournie par le serveur, sélection multiple dans le catalogue cloud, correctif du filtre par série et compteur chargés/total |
 | **0.6.0** | 60 | Synchro de lecture en direct dans les deux sens avec journal hors ligne ; dialogues et notifications harmonisés partout ; outils de la feuille cloud ; réglages repensés |
 | **0.5.0** | 50 | API mobile Library Manager (PKCE, espaces, révisions, transferts), jetons dans le Trousseau, connexion dans l'application, grille des livres distants, téléchargements et envois, couvertures cloud |
 | 0.2.x | 20–23 | Icônes et identité visuelle ; KOReader (sidecars, partial MD5, kosync) ; avancement dans la grille ; métadonnées écrites dans les fichiers ; export ZIP avec sidecars ; réglages réorganisés |
