@@ -1,31 +1,49 @@
-// Autocomplete select for the remote series filter: a closed-looking field
-// that opens a filterable dropdown ("Toutes les séries" clears). Not a chip
-// row — one control, keyboard-friendly, scales with long series names.
+// Autocomplete select for the remote series filter: the dropdown is fed by a
+// SERVER query (loadOptions(prefix) — the catalogue search restricted to
+// series), so it finds series beyond the currently loaded page. "Toutes les
+// séries" clears the filter. One control, scales with long series names.
 
-import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useColorScheme } from 'react-native';
 import { themeTokens } from '../../theme/tokens';
 
-export function SeriesSelect({ value, options, onChange }: {
+export function SeriesSelect({ value, onChange, loadOptions }: {
   value: string | null;
-  options: string[];
   onChange(series: string | null): void;
+  /** server query for series matching the typed prefix (debounced) */
+  loadOptions(prefix: string): Promise<string[]>;
 }) {
   const { t } = useTranslation();
   const t0 = themeTokens(useColorScheme() === 'dark' ? 'night' : 'day');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const filtered = options
-    .filter((s) => s.toLowerCase().includes(query.trim().toLowerCase()))
-    .slice(0, 30);
+  const [options, setOptions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const requestId = useRef(0);
+
+  useEffect(() => {
+    if (!open) return;
+    const id = ++requestId.current;
+    const timer = setTimeout(() => {
+      setLoading(true);
+      loadOptions(query.trim())
+        .then((list) => { if (requestId.current === id) setOptions(list); })
+        .catch(() => { if (requestId.current === id) setOptions([]); })
+        .finally(() => { if (requestId.current === id) setLoading(false); });
+    }, 300);
+    return () => clearTimeout(timer);
+    // reload on open and on every keystroke (debounced)
+  }, [open, query, loadOptions]);
+
   const pick = (series: string | null) => {
     onChange(series);
     setOpen(false);
     setQuery('');
   };
+
   return (
     <View style={styles.root}>
       <Pressable
@@ -51,12 +69,15 @@ export function SeriesSelect({ value, options, onChange }: {
             autoCorrect={false}
           />
           <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
+            {loading ? (
+              <ActivityIndicator style={{ paddingVertical: 12 }} color={t0.muted} />
+            ) : null}
             <Pressable style={styles.option} onPress={() => pick(null)}>
               <Text style={[styles.optionText, { color: value ? t0.foreground : t0.accent, fontWeight: value ? '400' : '700' }]}>
                 {t('library.remote.seriesAll')}
               </Text>
             </Pressable>
-            {filtered.map((s) => (
+            {!loading && options.map((s) => (
               <Pressable key={s} style={styles.option} onPress={() => pick(s)}>
                 <Text
                   numberOfLines={1}
@@ -66,7 +87,7 @@ export function SeriesSelect({ value, options, onChange }: {
                 </Text>
               </Pressable>
             ))}
-            {filtered.length === 0 ? (
+            {!loading && options.length === 0 ? (
               <Text style={[styles.empty, { color: t0.muted }]}>{t('library.remote.seriesEmpty')}</Text>
             ) : null}
           </ScrollView>
