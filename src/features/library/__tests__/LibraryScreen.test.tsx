@@ -138,6 +138,8 @@ describe('LibraryScreen', () => {
       fireEvent.press(await screen.findByText('Perso'));
       await screen.findByText('Aucun livre à afficher');
       fireEvent.changeText(await screen.findByPlaceholderText('Rechercher sur le serveur…'), 'verne');
+      // eslint-disable-next-line no-console
+      console.log('URLS SO FAR:', fetchMock.mock.calls.map(([u]) => String(u)).join(' | '));
       // debounced: the search route is queried with the encoded keyword
       expect(await screen.findByText('Verne')).toBeOnTheScreen();
       await waitFor(() => {

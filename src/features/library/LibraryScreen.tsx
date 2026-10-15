@@ -292,6 +292,7 @@ export function LibraryScreen() {
     setRemoteQuery('');
     setRemoteSeries(null);
     setRemoteSelection(new Set());
+    loadedFilters.current = JSON.stringify(['', null]);
     detailsCache.current.clear();
     void (async () => {
       setLmBusy(true);
@@ -364,14 +365,19 @@ export function LibraryScreen() {
     })();
   };
 
-  // debounced server search: don't fire a request per keystroke
+  // debounced server-side filter reload: refetch whenever the current filters
+  // differ from the ones the loaded results came with (query and/or series)
+  const loadedFilters = useRef<string | null>(null);
+  const filtersKey = () => JSON.stringify([remoteQuery.trim(), remoteSeries]);
   useEffect(() => {
-    if (!activeSpace) return;
-    const timer = setTimeout(reloadRemote, 400);
+    if (!activeSpace) { loadedFilters.current = null; return; }
+    const key = filtersKey();
+    if (loadedFilters.current === key) return;
+    const timer = setTimeout(() => { loadedFilters.current = key; reloadRemote(); }, 350);
     return () => clearTimeout(timer);
-    // remoteQuery drives the refetch; the other deps are read through state
+    // remoteQuery/remoteSeries drive the refetch; the rest is read through state
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remoteQuery]);
+  }, [activeSpace, remoteQuery, remoteSeries]);
 
   // one-to-one match: the used set tracks local ids already claimed, so two
   // remotes with the same title never steal each other's counterpart — the
@@ -984,7 +990,9 @@ export function LibraryScreen() {
                 ) : null}
                 {lmBusy ? <ActivityIndicator style={{ paddingVertical: 8 }} color={t0.muted} /> : null}
                 <Text style={[styles.sheetSection, { color: t0.muted }]}>
-                  {remoteQuery.trim() ? t('library.remote.results', { count: (remoteBooks ?? []).length }) : t('library.remote.onServer', { count: remoteTotal ?? (remoteBooks ?? []).length })}
+                  {remoteQuery.trim()
+                    ? t('library.remote.results', { count: (remoteBooks ?? []).length })
+                    : t('library.remote.onServer', { loaded: (remoteBooks ?? []).length, total: remoteTotal ?? (remoteBooks ?? []).length })}
                 </Text>
                 <FlatList
                   data={remoteBooks ?? []}
