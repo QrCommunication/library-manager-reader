@@ -960,8 +960,16 @@ export function LibraryScreen() {
                 </View>
                 <SeriesSelect
                   value={remoteSeries}
-                  options={[...new Set((remoteBooks ?? []).map((b) => b.series).filter((s): s is string => Boolean(s)))].sort((a, b) => a.localeCompare(b))}
-                  onChange={(series) => setRemoteSeries(series)}
+                  onChange={(series) => { setRemoteSeries(series); }}
+                  loadOptions={(prefix) => {
+                    const client = lmClientRef.current;
+                    const sp = activeSpace;
+                    if (!client || !sp) return Promise.resolve([]);
+                    return client
+                      .listBooks(sp.id, { search: prefix || undefined, pageSize: 100 })
+                      .then((page) => [...new Set(page.items.map((b) => b.series).filter((s): s is string => Boolean(s)))].sort((a, b) => a.localeCompare(b)))
+                      .catch(() => []);
+                  }}
                 />
                 {remoteSelection.size > 0 ? (
                   <View style={[styles.selectionBar, { backgroundColor: t0.chrome, borderColor: t0.border }]}>
@@ -994,7 +1002,9 @@ export function LibraryScreen() {
                     <RemoteBookGridItem
                       book={item}
                       inLibrary={matchedRemoteIds().has(item.id)}
-                      onLongPress={() => (remoteSelection.size > 0 ? toggleRemoteSelection(item) : askTransfer(item))}
+                      // long-press checks the book (bulk selection); a tap
+                      // offers the single transfer outside selection mode
+                      onLongPress={() => toggleRemoteSelection(item)}
                       onPress={() => (remoteSelection.size > 0 ? toggleRemoteSelection(item) : askTransfer(item))}
                       onInfo={() => showRemoteInfo(item)}
                       selectionMode={remoteSelection.size > 0}
