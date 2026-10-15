@@ -1,6 +1,7 @@
 import { partialMd5Hex } from './partialMd5';
 import type { KoSyncClient } from './koreaderSync';
 import type { ReadingProgress } from '../types';
+import { xpointerOrNull } from './xpointer';
 
 export interface BookSyncDeps {
   readAt(path: string, offset: number, length: number): Promise<Uint8Array | null>;
@@ -18,8 +19,11 @@ export type BookSyncResult =
       kind: 'conflict';
       digest: string;
       server: number;
+      serverProgress: string | null;
       local: number;
+      localXPointer: string | null;
       serverTimestamp: number | null;
+      serverDevice: string | null;
       localUpdatedAt: number;
     };
 
@@ -50,20 +54,26 @@ export async function syncBookProgress(
     kind: 'conflict',
     digest,
     server: server!.percentage,
+    serverProgress: server!.progress,
     local: local!.fraction,
+    localXPointer: local!.xpointer ?? null,
     serverTimestamp: server!.timestamp,
+    serverDevice: server!.device,
     localUpdatedAt: local!.updatedAt,
   };
 }
+
+export type KoSyncConflict = Extract<BookSyncResult, { kind: 'conflict' }> & { bookId: string };
 
 export interface LibrarySyncSummary {
   pushed: number;
   pulled: number;
   inSync: number;
   none: number;
-  // every conflict is resolved newest-wins and counted here AND in the side
-  // that won (pulled or pushed)
-  conflicts: number;
+  // diverging positions are NOT resolved here (no clock / max-percentage
+  // rule): the caller presents each one for an explicit choice, then calls
+  // applyServerProgress or pushLocalProgress
+  conflicts: KoSyncConflict[];
   failed: number;
 }
 
@@ -71,7 +81,7 @@ export async function syncLibraryProgress(
   deps: BookSyncDeps,
   books: readonly { id: string; filePath: string }[],
 ): Promise<LibrarySyncSummary> {
-  const summary: LibrarySyncSummary = { pushed: 0, pulled: 0, inSync: 0, none: 0, conflicts: 0, failed: 0 };
+  const summary: LibrarySyncSummary = { pushed: 0, pulled: 0, inSync: 0, none: 0, conflicts: [], failed: 0 };
   for (const book of books) {
     try {
       const r = await syncBookProgress(deps, book, book.filePath);
@@ -79,19 +89,7 @@ export async function syncLibraryProgress(
       else if (r.kind === 'in_sync') summary.inSync++;
       else if (r.kind === 'pulled') summary.pulled++;
       else if (r.kind === 'pushed') summary.pushed++;
-      else {
-        // a diverging position is not left to the user: the most recently
-        // read side wins (server timestamps ride the wire in unix seconds)
-        summary.conflicts++;
-        const serverMs = (r.serverTimestamp ?? 0) * 1000;
-        if (serverMs > r.localUpdatedAt) {
-          await applyServerProgress(deps, book.id, { percentage: r.server, timestamp: r.serverTimestamp });
-          summary.pulled++;
-        } else {
-          await pushLocalProgress(deps, r.digest, { fraction: r.local });
-          summary.pushed++;
-        }
-      }
+      else summary.conflicts.push({ ...r, bookId: book.id });
     } catch {
       summary.failed++;
     }
@@ -99,26 +97,41 @@ export async function syncLibraryProgress(
   return summary;
 }
 
+/** explicit choice for one conflict (kosync document key = r.digest) */
+export async function resolveKoSyncConflict(deps: BookSyncDeps, c: KoSyncConflict, choice: 'server' | 'local'): Promise<void> {
+  if (choice === 'server') {
+    await applyServerProgress(deps, c.bookId, { percentage: c.server, progress: c.serverProgress, timestamp: c.serverTimestamp });
+  } else {
+    await pushLocalProgress(deps, c.digest, { fraction: c.local, xpointer: c.localXPointer });
+  }
+}
+
 export async function applyServerProgress(
   deps: BookSyncDeps,
   bookId: string,
-  server: { percentage: number; timestamp: number | null },
+  server: { percentage: number; progress?: string | null; timestamp: number | null },
 ): Promise<void> {
-  // a KOReader percentage cannot resolve to our cfis: drop it, the reader
-  // resumes from the fraction (engine-side init/goToFraction handles that)
+  // the kosync document key is the partial MD5 of THIS file, so a KOReader
+  // XPointer addresses these exact bytes: keep it (the engine resolves it on
+  // open, else falls back to the fraction). Our cfi cannot be derived here.
   await deps.saveProgress({
     bookId,
     cfi: null,
+    xpointer: xpointerOrNull(server.progress),
     fraction: server.percentage,
     sectionIndex: null,
-    updatedAt: server.timestamp !== null ? server.timestamp * 1000 : Date.now(),
+    // local change time (local clock): Library Manager reconciliation compares
+    // it with its own local agreement time, never with another device's clock
+    updatedAt: Date.now(),
   });
 }
 
 export async function pushLocalProgress(
   deps: BookSyncDeps,
   digest: string,
-  local: Pick<ReadingProgress, 'fraction'>,
+  local: Pick<ReadingProgress, 'fraction' | 'xpointer'>,
 ): Promise<boolean> {
-  return deps.client.updateProgress(digest, progressString(local.fraction), local.fraction);
+  // KOReader reads `progress` as an XPointer for reflowable books; the legacy
+  // percent string only remains when no precise anchor is known
+  return deps.client.updateProgress(digest, xpointerOrNull(local.xpointer) ?? progressString(local.fraction), local.fraction);
 }

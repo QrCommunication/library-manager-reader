@@ -267,19 +267,53 @@ describe('LmClient — /api/v1/mobile business endpoints', () => {
     expect(calls[0]!.url).toBe(`${LM_BASE_URL}/api/v1/mobile/spaces/s1/books/b1/progress?versionId=v1`);
   });
 
-  it('puts a progress operation and returns the stored receipt', async () => {
+  it('reads a KOReader progress and normalizes it (XPointer, fraction, ms timestamp)', async () => {
+    const xp = '/body/DocFragment[2]/body/p[3]/text()[1].42';
+    const { client } = make(() => okJson({
+      bookId: 'b1', versionId: 'v1', progress: xp, percentage: 0.125, revision: 2, updatedAt: '2023-11-14T22:13:20Z',
+    }));
+    expect(await client.getProgress('s1', 'b1', 'v1')).toEqual({
+      bookId: 'b1', versionId: 'v1', progress: xp, percentage: 0.125, revision: 2, updatedAtMs: 1700000000000,
+    });
+  });
+
+  it('never surfaces a non-XPointer coordinate as a position', async () => {
+    const { client } = make(() => okJson({
+      bookId: 'b1', versionId: 'v1', progress: 'epubcfi(/6/4!/4/2:0)', percentage: 0.5, revision: 1, updatedAt: 1700000000,
+    }));
+    expect(await client.getProgress('s1', 'b1', 'v1')).toMatchObject({ progress: null, percentage: 0.5, updatedAtMs: 1700000000000 });
+  });
+
+  it('rejects a payload without percentage/revision instead of guessing', async () => {
+    const { client } = make(() => okJson({ bookId: 'b1', versionId: 'v1', cfi: null, percent: 12.5, revision: 1 }));
+    await expect(client.getProgress('s1', 'b1', 'v1')).rejects.toMatchObject({ kind: 'server' });
+  });
+
+  it('puts a KOReader progress operation and returns the stored receipt', async () => {
+    const xp = '/body/DocFragment[1]/body/p/text().0';
     const { calls, client } = make(() => okJson({
-      bookId: 'b1', versionId: 'v1', cfi: null, chapterId: null, percent: 12.5, revision: 1, updatedAt: 1700000000,
+      bookId: 'b1', versionId: 'v1', progress: xp, percentage: 0.125, revision: 1, updatedAt: 1700000000,
     }));
     const receipt = await client.putProgress('s1', 'b1', {
       installationId: 'i1', operationId: 'op-1', expectedRevision: 0, versionId: 'v1',
-      cfi: null, chapterId: null, percent: 12.5,
+      progress: xp, percentage: 0.125,
     });
     expect(receipt.revision).toBe(1);
     expect(calls[0]!.init.method).toBe('PUT');
     expect(calls[0]!.url).toBe(`${LM_BASE_URL}/api/v1/mobile/spaces/s1/books/b1/progress`);
-    const sent = JSON.parse(String(calls[0]!.init.body));
-    expect(sent).toMatchObject({ expectedRevision: 0, percent: 12.5 });
+    // exactly the KOReader body: no cfi / chapterId / percent
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      installationId: 'i1', operationId: 'op-1', expectedRevision: 0, versionId: 'v1', progress: xp, percentage: 0.125,
+    });
+  });
+
+  it('sanitizes the body: invalid XPointer → null, fraction clamped to 0..1', async () => {
+    const { calls, client } = make(() => okJson({ bookId: 'b1', versionId: 'v1', progress: null, percentage: 1, revision: 1, updatedAt: 1 }));
+    await client.putProgress('s1', 'b1', {
+      installationId: 'i1', operationId: 'op-1', expectedRevision: 0, versionId: 'v1',
+      progress: 'epubcfi(/6/2)', percentage: 1.7,
+    });
+    expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({ progress: null, percentage: 1 });
   });
 
   it('maps business errors: 401 auth, 403 forbidden, 429 rate, 500 server', async () => {
@@ -304,7 +338,7 @@ describe('LmClient — /api/v1/mobile business endpoints', () => {
       error: { code: 'revisionConflict', messageKey: 'errors.revisionConflict', requestId: 'rid-1', details: { expectedRevision: 0, currentRevision: 1 } },
     }), { status: 409 }));
     const err = await client.putProgress('s1', 'b1', {
-      installationId: 'i1', operationId: 'op-1', expectedRevision: 0, versionId: 'v1', cfi: null, chapterId: null, percent: 1,
+      installationId: 'i1', operationId: 'op-1', expectedRevision: 0, versionId: 'v1', progress: null, percentage: 0.01,
     }).catch((e: unknown) => e as LmError) as LmError;
     expect(err).toBeInstanceOf(LmError);
     expect(err.kind).toBe('conflict');

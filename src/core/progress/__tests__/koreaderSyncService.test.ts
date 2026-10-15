@@ -2,6 +2,7 @@ import {
   syncBookProgress,
   applyServerProgress,
   pushLocalProgress,
+  resolveKoSyncConflict,
   syncLibraryProgress,
   type BookSyncDeps,
 } from '../koreaderSyncService';
@@ -63,6 +64,11 @@ const serverProgress = (percentage: number): KoSyncProgress =>
 const localProgress = (fraction: number): ReadingProgress =>
   ({ bookId: 'b1', cfi: 'cfi-1', fraction, sectionIndex: 2, updatedAt: 1690000000 });
 
+// local saves stamp the LOCAL change time (never the server's clock)
+const NOW = 1234;
+beforeEach(() => { jest.spyOn(Date, 'now').mockReturnValue(NOW); });
+afterEach(() => { jest.restoreAllMocks(); });
+
 describe('syncBookProgress', () => {
   it('reports none when neither side has progress', async () => {
     const { deps } = makeDeps();
@@ -79,7 +85,7 @@ describe('syncBookProgress', () => {
     const { deps, calls } = makeDeps({ server: serverProgress(0.5) });
     expect(await syncBookProgress(deps, { id: 'b1' }, '/books/b.epub')).toEqual({ kind: 'pulled', fraction: 0.5 });
     // cfi is dropped: a KOReader percentage cannot resolve to our cfis
-    expect(calls).toContain('save:0.5:null:1700000000000');
+    expect(calls).toContain(`save:0.5:null:${NOW}`);
   });
 
   it('reports in_sync when both sides agree', async () => {
@@ -99,13 +105,29 @@ describe('conflict resolution helpers', () => {
   it('applyServerProgress saves the server fraction without a cfi', async () => {
     const { deps, calls } = makeDeps({});
     await applyServerProgress(deps, 'b1', serverProgress(0.9));
-    expect(calls).toContain('save:0.9:null:1700000000000');
+    expect(calls).toContain(`save:0.9:null:${NOW}`);
   });
 
   it('pushLocalProgress sends the stored local fraction', async () => {
     const { deps, calls } = makeDeps({});
     await expect(pushLocalProgress(deps, 'digest-1', localProgress(0.35))).resolves.toBe(true);
     expect(calls).toContain('put:35.0:0.35');
+  });
+
+  it('pushLocalProgress sends the local XPointer as KOReader progress when known', async () => {
+    const { deps, calls } = makeDeps({});
+    const xp = '/body/DocFragment[3]/body/p[2]/text().17';
+    await pushLocalProgress(deps, 'digest-1', { fraction: 0.35, xpointer: xp });
+    expect(calls).toContain(`put:${xp}:0.35`);
+  });
+
+  it('applyServerProgress keeps a KOReader XPointer and ignores a non-XPointer progress', async () => {
+    const { deps, getLocal } = makeDeps({});
+    const xp = '/body/DocFragment[3]/body/p[2]/text().17';
+    await applyServerProgress(deps, 'b1', { ...serverProgress(0.9), progress: xp });
+    expect(getLocal()).toMatchObject({ fraction: 0.9, cfi: null, xpointer: xp });
+    await applyServerProgress(deps, 'b1', { ...serverProgress(0.9), progress: '90.0' });
+    expect(getLocal()).toMatchObject({ xpointer: null });
   });
 });
 
@@ -160,36 +182,32 @@ describe('syncLibraryProgress', () => {
       emptyBook: {},
     });
     const summary = await syncLibraryProgress(deps, ['pushedBook', 'pulledBook', 'sameBook', 'emptyBook'].map(book));
-    expect(summary).toEqual({ pushed: 1, pulled: 1, inSync: 1, none: 1, conflicts: 0, failed: 0 });
+    expect(summary).toEqual({ pushed: 1, pulled: 1, inSync: 1, none: 1, conflicts: [], failed: 0 });
     expect(calls).toContain('put:pushedBook:25.0:0.25');
-    expect(calls).toContain('save:pulledBook:0.5:1700000000000');
+    expect(calls).toContain(`save:pulledBook:0.5:${NOW}`);
   });
 
-  it('resolves a conflict newest-wins: a newer server position is pulled', async () => {
-    const { deps, calls } = makeLibraryDeps({
-      conflictBook: { server: serverProgress(0.8), local: { ...localProgress(0.2), updatedAt: 1690000000 } },
-    });
-    const summary = await syncLibraryProgress(deps, [book('conflictBook')]);
-    expect(summary).toEqual({ pushed: 0, pulled: 1, inSync: 0, none: 0, conflicts: 1, failed: 0 });
-    expect(calls).toContain('save:conflictBook:0.8:1700000000000');
-  });
-
-  it('resolves a conflict newest-wins: a newer local position is pushed', async () => {
+  it('never resolves a divergence by clock: it is returned for an explicit choice, nothing written', async () => {
     const { deps, calls } = makeLibraryDeps({
       conflictBook: { server: serverProgress(0.8), local: { ...localProgress(0.2), updatedAt: 1710000000000 } },
     });
     const summary = await syncLibraryProgress(deps, [book('conflictBook')]);
-    expect(summary).toEqual({ pushed: 1, pulled: 0, inSync: 0, none: 0, conflicts: 1, failed: 0 });
-    expect(calls).toContain('put:conflictBook:20.0:0.2');
+    expect(summary).toMatchObject({ pushed: 0, pulled: 0, failed: 0 });
+    expect(summary.conflicts).toHaveLength(1);
+    expect(summary.conflicts[0]).toMatchObject({ bookId: 'conflictBook', server: 0.8, local: 0.2, serverDevice: 'Kobo' });
+    expect(calls.some((c) => c.startsWith('put:') || c.startsWith('save:'))).toBe(false);
   });
 
-  it('prefers the local position on an exact timestamp tie', async () => {
-    const { deps, calls } = makeLibraryDeps({
-      tieBook: { server: serverProgress(0.8), local: { ...localProgress(0.2), updatedAt: 1700000000000 } },
-    });
-    const summary = await syncLibraryProgress(deps, [book('tieBook')]);
-    expect(summary).toEqual({ pushed: 1, pulled: 0, inSync: 0, none: 0, conflicts: 1, failed: 0 });
-    expect(calls).toContain('put:tieBook:20.0:0.2');
+  it('resolveKoSyncConflict applies the chosen side', async () => {
+    const pull = makeLibraryDeps({ c: { server: serverProgress(0.8), local: localProgress(0.2) } });
+    const [conflict] = (await syncLibraryProgress(pull.deps, [book('c')])).conflicts;
+    await resolveKoSyncConflict(pull.deps, conflict!, 'server');
+    expect(pull.locals.c).toMatchObject({ fraction: 0.8, cfi: null });
+
+    const push = makeLibraryDeps({ c: { server: serverProgress(0.8), local: localProgress(0.2) } });
+    const [c2] = (await syncLibraryProgress(push.deps, [book('c')])).conflicts;
+    await resolveKoSyncConflict(push.deps, c2!, 'local');
+    expect(push.calls).toContain('put:c:20.0:0.2');
   });
 
   it('counts an unreadable file as failed and keeps syncing the rest', async () => {
@@ -198,7 +216,7 @@ describe('syncLibraryProgress', () => {
       goodBook: { local: localProgress(0.6) },
     });
     const summary = await syncLibraryProgress(deps, [book('brokenBook'), book('goodBook')]);
-    expect(summary).toEqual({ pushed: 1, pulled: 0, inSync: 0, none: 0, conflicts: 0, failed: 1 });
+    expect(summary).toEqual({ pushed: 1, pulled: 0, inSync: 0, none: 0, conflicts: [], failed: 1 });
     expect(calls).toContain('put:goodBook:60.0:0.6');
   });
 });

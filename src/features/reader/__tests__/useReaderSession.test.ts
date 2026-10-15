@@ -41,7 +41,7 @@ describe('useReaderSession', () => {
     await waitFor(() => expect(result.current.state).toBe('ready'));
     expect(deps.calls).toContain('open');
     expect(deps.calls).toContain('settings');
-    expect(deps.state.openArgs?.resume).toEqual({ cfi: 'c7', fraction: 0.7 });
+    expect(deps.state.openArgs?.resume).toEqual({ cfi: 'c7', xpointer: null, fraction: 0.7 });
     // resume navigation is engine-side now: no post-open goTo burst
     expect(deps.calls).not.toContain('goTo:c7');
     expect(deps.calls).not.toContain('goToFraction');
@@ -83,7 +83,7 @@ describe('useReaderSession', () => {
     expect(deps.calls).not.toContain('touch');
     await act(async () => { releaseOpen(); });
     await waitFor(() => expect(result.current.state).toBe('ready'));
-    expect(deps.state.openArgs?.resume).toEqual({ cfi: 'c7', fraction: 0.7 });
+    expect(deps.state.openArgs?.resume).toEqual({ cfi: 'c7', xpointer: null, fraction: 0.7 });
     expect(deps.calls).not.toContain('save');
   });
 

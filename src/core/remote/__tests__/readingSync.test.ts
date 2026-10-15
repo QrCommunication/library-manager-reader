@@ -4,11 +4,15 @@ import { migrate } from '../../../db/migrate';
 import { createBooksRepo } from '../../../db/booksRepo';
 import { createProgressRepo } from '../../../db/progressRepo';
 import { createSettingsRepo } from '../../../db/settingsRepo';
-import { createRemoteSyncRepo, type RemoteSyncRepo } from '../../../db/remoteSyncRepo';
+import { createRemoteSyncRepo } from '../../../db/remoteSyncRepo';
 import { LM_TOKEN_KEYS } from '../lmTokens';
-import type { LmClient } from '../lmClient';
-import { pullReadingPosition, pushReadingPosition } from '../readingSync';
+import type { LmClient, LmProgressOp } from '../lmClient';
+
+import { pushReadingPosition, reconcileReadingPosition, resolveReadingConflict } from '../readingSync';
+import { fakeLmServer } from './fakeLmServer';
 import { DEFAULT_UI_PREFS, type UiPrefs } from '../../types';
+
+const XP = '/body/DocFragment[2]/body/p[3]/text().42';
 
 jest.mock('expo-crypto', () => ({
   __esModule: true,
@@ -28,7 +32,7 @@ const makeEnv = async () => {
   const progress = createProgressRepo(db);
   const settings = createSettingsRepo(db);
   const remoteSync = createRemoteSyncRepo(db);
-  const services = { books, progress, settings, remoteSync } as unknown as Parameters<typeof pullReadingPosition>[0];
+  const services = { books, progress, settings, remoteSync } as unknown as Parameters<typeof pushReadingPosition>[0];
   return { services: services as never, progress, remoteSync, settings };
 };
 
@@ -50,56 +54,89 @@ describe('readingSync — live page-turn glue', () => {
     const put = jest.fn();
     const client = { putProgress: put } as unknown as Pick<LmClient, 'putProgress'>;
     jest.spyOn(require('../lmAccount'), 'lmClientFromAccount').mockImplementation(async () => client as LmClient);
-    await pushReadingPosition(services, 'b1', { cfi: 'c1', fraction: 0.5 });
+    await pushReadingPosition(services, 'b1', { xpointer: XP, fraction: 0.5 });
     expect(put).not.toHaveBeenCalled();
     expect(await remoteSync.pendingOps()).toHaveLength(0);
   });
 
-  it('push: linked + connected → journal op sent with the local percent, receipt revision stored', async () => {
+  it('push: linked exact copy + connected → KOReader op sent (XPointer + fraction), receipt revision stored', async () => {
     const { services, remoteSync, settings } = await makeEnv();
-    await remoteSync.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
+    await remoteSync.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', exactCopy: true });
     const prefs: UiPrefs = { ...DEFAULT_UI_PREFS };
     await settings.putUiPrefs({ ...prefs, lmUsername: 'me', lmInstallationId: 'inst-1' });
     await seedTokens();
-    const puts: { expectedRevision: number; percent: number; installationId: string }[] = [];
+    const puts: LmProgressOp[] = [];
     const client = {
-      putProgress: async (_s: string, _b: string, op: { expectedRevision: number; percent: number; installationId: string }) => {
+      putProgress: async (_s: string, _b: string, op: LmProgressOp) => {
         puts.push(op);
-        return { bookId: 'sb1', versionId: 'v1', cfi: null, chapterId: null, percent: op.percent, revision: 1, updatedAt: 1700000000 };
+        return { bookId: 'sb1', versionId: 'v1', progress: op.progress, percentage: op.percentage, revision: 1, updatedAtMs: 1700000000000 };
       },
     } as unknown as Pick<LmClient, 'putProgress'>;
     const spy = jest.spyOn(require('../lmAccount'), 'lmClientFromAccount').mockImplementation(async () => client as LmClient);
 
-    await pushReadingPosition(services, 'b1', { cfi: 'epubcfi(x)', fraction: 0.5 });
+    await pushReadingPosition(services, 'b1', { xpointer: XP, fraction: 0.5 });
 
     expect(puts).toHaveLength(1);
-    expect(puts[0]).toMatchObject({ expectedRevision: 0, percent: 50, installationId: 'inst-1' });
+    expect(puts[0]).toMatchObject({ expectedRevision: 0, progress: XP, percentage: 0.5, installationId: 'inst-1' });
+    expect(puts[0]).not.toHaveProperty('cfi');
+    expect(puts[0]).not.toHaveProperty('percent');
     expect(await remoteSync.pendingOps()).toHaveLength(0);
     expect(await remoteSync.getLastRevision('b1')).toBe(1);
     spy.mockRestore();
   });
 
-  it('pull: server strictly newer → local progress replaced; local newer → untouched', async () => {
-    const { services, progress, remoteSync } = await makeEnv();
-    await remoteSync.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    await seedTokens();
+  it('reconcile: unlinked or signed out → none, no network', async () => {
+    const { services } = await makeEnv();
     const spy = jest.spyOn(require('../lmAccount'), 'lmClientFromAccount');
+    expect(await reconcileReadingPosition(services, 'b1')).toEqual({ kind: 'none' });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
 
-    // server newer than the (absent) local progress → applied
-    let client = {
-      getProgress: async () => ({ bookId: 'sb1', versionId: 'v1', cfi: 'srv', chapterId: null, percent: 70, revision: 2, updatedAt: 1700000000 }),
-    } as unknown as Pick<LmClient, 'getProgress'>;
-    spy.mockImplementation(async () => client as LmClient);
-    await pullReadingPosition(services, 'b1');
-    expect(await progress.getProgress('b1')).toMatchObject({ fraction: 0.7, cfi: 'srv' });
+  it('reconcile at open: another device moved, this one did not → fast-forward (XPointer kept)', async () => {
+    const { services, progress, remoteSync, settings } = await makeEnv();
+    await remoteSync.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', exactCopy: true });
+    await settings.putUiPrefs({ ...DEFAULT_UI_PREFS, lmUsername: 'me', lmInstallationId: 'inst-1' });
+    await seedTokens();
+    const server = fakeLmServer();
+    server.otherDeviceWrites('sb1', 0.7, XP);
+    const spy = jest.spyOn(require('../lmAccount'), 'lmClientFromAccount').mockImplementation(async () => server.client as unknown as LmClient);
+    expect(await reconcileReadingPosition(services, 'b1')).toMatchObject({ kind: 'pulled' });
+    expect(await progress.getProgress('b1')).toMatchObject({ fraction: 0.7, cfi: null, xpointer: XP });
+    spy.mockRestore();
+  });
 
-    // local newer → untouched
-    client = {
-      getProgress: async () => ({ bookId: 'sb1', versionId: 'v1', cfi: 'old', chapterId: null, percent: 10, revision: 3, updatedAt: 1600000000 }),
-    } as unknown as Pick<LmClient, 'getProgress'>;
-    spy.mockImplementation(async () => client as LmClient);
-    await pullReadingPosition(services, 'b1');
-    expect(await progress.getProgress('b1')).toMatchObject({ fraction: 0.7 });
+  it('reconcile: both moved → conflict; resolving with the local side writes a new op on the re-read revision', async () => {
+    const { services, progress, remoteSync, settings } = await makeEnv();
+    await remoteSync.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', exactCopy: true });
+    await settings.putUiPrefs({ ...DEFAULT_UI_PREFS, lmUsername: 'me', lmInstallationId: 'inst-1' });
+    await seedTokens();
+    const server = fakeLmServer();
+    const spy = jest.spyOn(require('../lmAccount'), 'lmClientFromAccount').mockImplementation(async () => server.client as unknown as LmClient);
+    await progress.saveProgress({ bookId: 'b1', cfi: 'c', xpointer: XP, fraction: 0.2, sectionIndex: null, updatedAt: Date.now() });
+    server.otherDeviceWrites('sb1', 0.9);
+    expect(await reconcileReadingPosition(services, 'b1')).toEqual({ kind: 'conflict' });
+    expect(server.state.get('sb1')).toMatchObject({ percentage: 0.9 });
+    await resolveReadingConflict(services, 'b1', 'local');
+    expect(server.state.get('sb1')).toMatchObject({ percentage: 0.2, progress: XP, revision: 2 });
+    spy.mockRestore();
+  });
+
+  it('push: a title-matched (non-exact) link sends the percentage only', async () => {
+    const { services, remoteSync, settings } = await makeEnv();
+    await remoteSync.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
+    await settings.putUiPrefs({ ...DEFAULT_UI_PREFS, lmUsername: 'me', lmInstallationId: 'inst-1' });
+    await seedTokens();
+    const puts: LmProgressOp[] = [];
+    const client = {
+      putProgress: async (_s: string, _b: string, op: LmProgressOp) => {
+        puts.push(op);
+        return { bookId: 'sb1', versionId: 'v1', progress: null, percentage: op.percentage, revision: 1, updatedAtMs: 1700000000000 };
+      },
+    } as unknown as Pick<LmClient, 'putProgress'>;
+    const spy = jest.spyOn(require('../lmAccount'), 'lmClientFromAccount').mockImplementation(async () => client as LmClient);
+    await pushReadingPosition(services, 'b1', { xpointer: XP, fraction: 0.25 });
+    expect(puts[0]).toMatchObject({ progress: null, percentage: 0.25 });
     spy.mockRestore();
   });
 });

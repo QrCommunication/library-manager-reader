@@ -33,7 +33,7 @@ describe('progressRepo', () => {
     const { progress } = await setup();
     await progress.saveProgress({ bookId: 'fixed-book-id', cfi: 'c1', fraction: 0.25, sectionIndex: 1, updatedAt: 10 });
     const all = await progress.listProgress();
-    expect(all).toEqual([{ bookId: 'fixed-book-id', cfi: 'c1', fraction: 0.25, sectionIndex: 1, updatedAt: 10 }]);
+    expect(all).toEqual([{ bookId: 'fixed-book-id', cfi: 'c1', xpointer: null, fraction: 0.25, sectionIndex: 1, updatedAt: 10 }]);
   });
 });
 

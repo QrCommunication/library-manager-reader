@@ -1,137 +1,99 @@
-import { DatabaseSync } from 'node:sqlite';
-import { createNodeSqliteDriver } from '../../../db/nodeSqliteDriver';
-import { migrate } from '../../../db/migrate';
-import { createRemoteSyncRepo, type RemoteSyncRepo } from '../../../db/remoteSyncRepo';
-import { LmClient, LmError } from '../lmClient';
-import { flushProgressJournal } from '../liveSync';
+import { LmError } from '../lmClient';
+import { flushProgressJournal, onProgressConflict, REPLAY_WINDOW_MS } from '../liveSync';
+import { fakeLmServer, journalOp, makeSyncDb } from './fakeLmServer';
 
-const makeRepo = async (bookIds: string[]): Promise<RemoteSyncRepo> => {
-  const db = createNodeSqliteDriver(new DatabaseSync(':memory:'));
-  await migrate(db);
-  for (const id of bookIds) {
-    await db.run(
-      'INSERT INTO books (id, title, format, file_name, file_size, added_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [id, 'T', 'epub', `${id}.epub`, 1, 1, 1],
-    );
-  }
-  return createRemoteSyncRepo(db);
+const XP = '/body/DocFragment[3]/body/p[2]/text().7';
+
+const setup = async (books = ['b1']) => {
+  const env = await makeSyncDb(books);
+  for (const b of books) await env.repo.linkBook({ bookId: b, spaceId: 's1', serverBookId: `srv-${b}`, versionId: 'v1' });
+  const server = fakeLmServer();
+  let now = 10_000;
+  const deps = { client: server.client, repo: env.repo, installationId: 'inst', now: () => now };
+  return { ...env, server, deps, tick: (ms: number) => { now += ms; } };
 };
 
-const receipt = (revision: number) => ({ bookId: 'sb1', versionId: 'v1', cfi: null, chapterId: null, percent: 20, revision, updatedAt: 1700000000 });
-
-type PutCall = { spaceId: string; bookId: string; op: { installationId: string; operationId: string; expectedRevision: number; versionId: string; cfi: string | null; chapterId: string | null; percent: number } };
-
-describe('flushProgressJournal — ordered, single-flight, offline-tolerant push', () => {
-  it('sends the pending op with the stored revision, persists the receipt and the new revision', async () => {
-    const repo = await makeRepo(['b1']);
-    await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: 'c1', chapterId: null, percent: 20 });
-    await repo.setLastRevision('b1', 3);
-
-    const calls: PutCall[] = [];
-    const deps = {
-      client: {
-        putProgress: async (spaceId: string, bookId: string, op: PutCall['op']) => {
-          calls.push({ spaceId, bookId, op });
-          return receipt(4);
-        },
-      } as unknown as Pick<LmClient, 'putProgress'>,
-      repo,
-      installationId: 'inst',
-      newOperationId: () => 'generated-1',
-    };
-    const summary = await flushProgressJournal(deps);
-    expect(summary).toEqual({ sent: 1, remaining: 0 });
-    expect(calls[0]!.op).toMatchObject({ installationId: 'inst', operationId: 'o1', expectedRevision: 3, versionId: 'v1', cfi: 'c1', percent: 20 });
-    expect(await repo.pendingOps()).toHaveLength(0);
-    expect(await repo.getLastRevision('b1')).toBe(4);
+describe('flushProgressJournal — exact replay, one op in flight per book, explicit conflicts', () => {
+  it('sends the KOReader body with the stored revision and records the agreement', async () => {
+    const { repo, server, deps } = await setup();
+    await repo.enqueueOp(journalOp('b1', 'o1', 0.2, XP));
+    expect(await flushProgressJournal(deps)).toEqual({ sent: 1, remaining: 0, conflicts: [] });
+    expect(server.puts[0]!.op).toEqual({
+      installationId: 'inst', operationId: 'o1', expectedRevision: 0, versionId: 'v1', progress: XP, percentage: 0.2,
+    });
+    expect(await repo.pendingOps()).toEqual([]);
+    expect(await repo.getLink('b1')).toMatchObject({ lastRevision: 1, syncedAt: 10_000 });
   });
 
-  it('a network failure stops the flush and keeps the op queued for the next attempt', async () => {
-    const repo = await makeRepo(['b1']);
-    await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: null, chapterId: null, percent: 10 });
-    const deps = {
-      client: {
-        putProgress: async () => { throw new LmError('network', 'offline'); },
-      } as unknown as Pick<LmClient, 'putProgress'>,
-      repo,
-      installationId: 'inst',
-      newOperationId: () => 'generated-1',
-    };
-    const summary = await flushProgressJournal(deps);
-    expect(summary).toEqual({ sent: 0, remaining: 1 });
-    expect((await repo.pendingOps()).map((o) => o.operationId)).toEqual(['o1']);
+  it('a lost response is recovered by re-sending the SAME operation (same id, same body)', async () => {
+    const { repo, server, deps } = await setup();
+    await repo.enqueueOp(journalOp('b1', 'o1', 0.2));
+    server.loseNextResponse();
+    expect(await flushProgressJournal(deps)).toMatchObject({ sent: 0, remaining: 1 });
+    // the next page turn must not coalesce away the ambiguous op
+    await repo.enqueueOp(journalOp('b1', 'o2', 0.3));
+    expect(await flushProgressJournal(deps)).toMatchObject({ sent: 2, remaining: 0 });
+    expect(server.puts.map((p) => [p.op.operationId, p.op.expectedRevision])).toEqual([['o1', 0], ['o1', 0], ['o2', 1]]);
+    // the replay was answered with the stored receipt: no double revision
+    expect(server.state.get('srv-b1')).toMatchObject({ revision: 2, percentage: 0.3 });
+    expect(await repo.getLastRevision('b1')).toBe(2);
   });
 
-  it('a 409 retries ONCE with a fresh operationId and the server revision from the error details', async () => {
-    const repo = await makeRepo(['b1']);
-    await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: null, chapterId: null, percent: 42 });
-    const calls: PutCall[] = [];
-    const deps = {
-      client: {
-        putProgress: async (spaceId: string, bookId: string, op: PutCall['op']) => {
-          calls.push({ spaceId, bookId, op });
-          if (calls.length === 1) {
-            throw new LmError('conflict', '409 revisionConflict', 'revisionConflict', { expectedRevision: 0, currentRevision: 5 });
-          }
-          return receipt(6);
-        },
-      } as unknown as Pick<LmClient, 'putProgress'>,
-      repo,
-      installationId: 'inst',
-      newOperationId: () => 'fresh-op',
-    };
+  it('a 409 parks the op as a conflict: nothing overwritten, later ops of that book wait, others go on', async () => {
+    const { repo, server, deps } = await setup(['b1', 'b2']);
+    server.otherDeviceWrites('srv-b1', 0.9);
+    const seen: string[] = [];
+    const off = onProgressConflict((b) => seen.push(b));
+    await repo.enqueueOp(journalOp('b1', 'o1', 0.2));
+    await repo.enqueueOp(journalOp('b2', 'o2', 0.4));
     const summary = await flushProgressJournal(deps);
-    expect(summary).toEqual({ sent: 1, remaining: 0 });
-    expect(calls[0]!.op.operationId).toBe('o1');
-    expect(calls[0]!.op.expectedRevision).toBe(0);
-    expect(calls[1]!.op.operationId).toBe('fresh-op');
-    expect(calls[1]!.op.expectedRevision).toBe(5);
-    expect(await repo.getLastRevision('b1')).toBe(6);
+    off();
+    expect(summary).toEqual({ sent: 1, remaining: 0, conflicts: ['b1'] });
+    expect(seen).toEqual(['b1']);
+    // the other device's position is intact
+    expect(server.state.get('srv-b1')).toMatchObject({ percentage: 0.9, revision: 1 });
+    expect((await repo.opsForBook('b1'))[0]).toMatchObject({ state: 'conflict', conflictRevision: 1 });
+    // a new page turn is journaled but waits behind the conflict
+    await repo.enqueueOp(journalOp('b1', 'o3', 0.25));
+    await flushProgressJournal(deps);
+    expect(server.puts.map((p) => p.op.operationId)).toEqual(['o1', 'o2']);
+    expect((await repo.opsForBook('b1')).map((o) => [o.operationId, o.state])).toEqual([['o1', 'conflict'], ['o3', 'pending']]);
   });
 
-  it('a second 409 drops the op instead of looping — the next page turn re-attempts', async () => {
-    const repo = await makeRepo(['b1']);
-    await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: null, chapterId: null, percent: 42 });
-    const conflict = new LmError('conflict', '409 revisionConflict', 'revisionConflict', { expectedRevision: 0, currentRevision: 5 });
-    const deps = {
-      client: {
-        putProgress: async () => { throw conflict; },
-      } as unknown as Pick<LmClient, 'putProgress'>,
-      repo,
-      installationId: 'inst',
-      newOperationId: () => 'fresh-op',
-    };
-    const summary = await flushProgressJournal(deps);
-    expect(summary).toEqual({ sent: 0, remaining: 0 });
-    expect(await repo.pendingOps()).toHaveLength(0);
+  it('offline, 5xx, 429 and an expired session keep the op; a definitive 4xx drops it', async () => {
+    const { repo, server, deps } = await setup();
+    await repo.enqueueOp(journalOp('b1', 'o1', 0.2));
+    for (const err of [
+      new LmError('network', 'offline'),
+      new LmError('server', '503', undefined, undefined, 503),
+      new LmError('rate', '429', undefined, undefined, 429),
+      new LmError('auth', undefined, undefined, undefined, 401),
+    ]) {
+      server.failNext(err);
+      expect(await flushProgressJournal(deps)).toMatchObject({ sent: 0, remaining: 1 });
+    }
+    server.failNext(new LmError('server', '422', 'validationFailed', undefined, 422));
+    expect(await flushProgressJournal(deps)).toMatchObject({ sent: 0, remaining: 0 });
+    expect(await repo.pendingOps()).toEqual([]);
   });
 
-  it('processes several books in order, keeping ops of later books when one drops', async () => {
-    const repo = await makeRepo(['b1', 'b2']);
-    await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    await repo.linkBook({ bookId: 'b2', spaceId: 's1', serverBookId: 'sb2', versionId: 'v2' });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: null, chapterId: null, percent: 10 });
-    await repo.enqueueOp({ bookId: 'b2', spaceId: 's1', serverBookId: 'sb2', versionId: 'v2', operationId: 'o2', cfi: null, chapterId: null, percent: 20 });
-    const calls: PutCall[] = [];
-    const deps = {
-      client: {
-        putProgress: async (spaceId: string, bookId: string, op: PutCall['op']) => {
-          calls.push({ spaceId, bookId, op });
-          if (bookId === 'sb1') throw new LmError('forbidden', '403 forbidden');
-          return receipt(2);
-        },
-      } as unknown as Pick<LmClient, 'putProgress'>,
-      repo,
-      installationId: 'inst',
-      newOperationId: () => 'gen',
-    };
+  it('an op first sent beyond the replay window is not replayed: it waits for explicit reconciliation', async () => {
+    const { repo, server, deps, tick } = await setup();
+    await repo.enqueueOp(journalOp('b1', 'o1', 0.2));
+    server.failNext(new LmError('network', 'offline'));
+    await flushProgressJournal(deps);
+    tick(REPLAY_WINDOW_MS + 1);
     const summary = await flushProgressJournal(deps);
-    expect(summary).toEqual({ sent: 1, remaining: 0 });
-    expect(calls.map((c) => c.bookId)).toEqual(['sb1', 'sb2']);
-    expect(await repo.pendingOps()).toHaveLength(0);
+    expect(summary.conflicts).toEqual(['b1']);
+    expect(server.puts).toHaveLength(1);
+    expect((await repo.opsForBook('b1'))[0]).toMatchObject({ state: 'conflict' });
+  });
+
+  it('is single-flight: concurrent callers share one drain', async () => {
+    const { repo, server, deps } = await setup();
+    await repo.enqueueOp(journalOp('b1', 'o1', 0.2));
+    const [a, b] = await Promise.all([flushProgressJournal(deps), flushProgressJournal(deps)]);
+    expect(a).toBe(b);
+    expect(server.puts).toHaveLength(1);
   });
 });

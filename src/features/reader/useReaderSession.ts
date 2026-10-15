@@ -2,20 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Appearance } from 'react-native';
 import { useServices, type AppServices } from '../../core/services';
 import { ReaderBridge, type SearchResultPayload, type SelectionPayload, type TtsSentencePayload } from '../../core/reader/bridge';
-import { pullReadingPosition, pushReadingPosition } from '../../core/remote/readingSync';
+import { pushReadingPosition, reconcileReadingPosition } from '../../core/remote/readingSync';
 import { createBase64BookTransport } from '../../core/reader/bookTransport';
 import { useReaderSettingsStore } from '../settings/readerSettingsStore';
 import { resolveTheme } from '../../core/types';
 import type { BookFormat, HighlightColor, ReaderSettings, TocItem } from '../../core/types';
 
 export interface BridgeLike {
-  openBook(a: { format: BookFormat; path: string; size: number; resume?: { cfi?: string | null; fraction?: number } | null }): Promise<{ toc: TocItem[]; metadata: unknown }>;
+  openBook(a: { format: BookFormat; path: string; size: number; resume?: { cfi?: string | null; xpointer?: string | null; fraction?: number } | null }): Promise<{ toc: TocItem[]; metadata: unknown }>;
   goTo(t: string): void;
   goToFraction(f: number): void;
+  goToPosition(p: { xpointer: string | null; fraction: number }): void;
   next(): void;
   prev(): void;
   applySettings(s: ReaderSettings): void;
-  onProgress(cb: (p: { cfi: string | null; fraction: number; sectionIndex: number | null }) => void): () => void;
+  onProgress(cb: (p: { cfi: string | null; xpointer?: string | null; fraction: number; sectionIndex: number | null }) => void): () => void;
   onEngineError(cb: (e: { code: string; message: string }) => void): () => void;
   onResumeApplied(cb: () => void): () => void;
   whenReady(): Promise<number>;
@@ -37,10 +38,10 @@ export interface BridgeLike {
 
 export interface ReaderSessionDeps {
   getBook(id: string): Promise<{ title: string; format: BookFormat; fileName: string; fileSize: number } | null>;
-  getProgress(bookId: string): Promise<{ cfi: string | null; fraction: number } | null>;
+  getProgress(bookId: string): Promise<{ cfi: string | null; xpointer?: string | null; fraction: number } | null>;
   fileExists(fileName: string): Promise<boolean>;
   bookPath(fileName: string): string;
-  saveProgress(p: { cfi: string | null; fraction: number; sectionIndex: number | null }): Promise<void>;
+  saveProgress(p: { cfi: string | null; xpointer?: string | null; fraction: number; sectionIndex: number | null }): Promise<void>;
   touchLastRead(): Promise<void>;
   makeBridge(): BridgeLike;
 }
@@ -52,18 +53,19 @@ export function createDefaultDeps(bookId: string, services: AppServices): Reader
       return b ? { title: b.title, format: b.format, fileName: b.fileName, fileSize: b.fileSize } : null;
     },
     getProgress: async (id) => {
-      // cloud pull rides the session's own progress read: if the server holds a
-      // strictly newer position for this linked book, the open lands there
-      await pullReadingPosition(services, id);
+      // cloud reconciliation rides the session's own progress read (spec §8:
+      // re-read at open): a fast-forward lands the open on the server
+      // position; a conflict keeps the local one and is asked once ready
+      await reconcileReadingPosition(services, id);
       const p = await services.progress.getProgress(id);
-      return p ? { cfi: p.cfi, fraction: p.fraction } : null;
+      return p ? { cfi: p.cfi, xpointer: p.xpointer ?? null, fraction: p.fraction } : null;
     },
     fileExists: (fileName) => services.fs.exists(`${services.paths.booksDir}/${fileName}`),
     bookPath: (fileName) => `${services.paths.booksDir}/${fileName}`,
     saveProgress: (p) => {
       // journal + background push to library-manager.com when this book is
       // cloud-linked; offline the op stays in SQLite until connectivity
-      void pushReadingPosition(services, bookId, { cfi: p.cfi, fraction: p.fraction });
+      void pushReadingPosition(services, bookId, { xpointer: p.xpointer ?? null, fraction: p.fraction });
       return services.progress.saveProgress({ bookId, ...p, updatedAt: Date.now() });
     },
     touchLastRead: () => services.books.touchLastRead(bookId, Date.now()),
@@ -102,7 +104,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
   // render-visible session state (ReaderScreen gates on it), not a ref
   const [bridge, setBridge] = useState<BridgeLike | null>(null);
   // survives unmount/retry so a post-crash reload reopens at the last known spot
-  const lastKnownRef = useRef<{ bookId: string; cfi: string | null; fraction: number; sectionIndex: number | null } | null>(null);
+  const lastKnownRef = useRef<{ bookId: string; cfi: string | null; xpointer: string | null; fraction: number; sectionIndex: number | null } | null>(null);
   const [nonce, setNonce] = useState(0);
   const retry = useCallback(() => setNonce((n) => n + 1), []);
 
@@ -130,7 +132,7 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
     let offProgress: (() => void) | undefined;
     let offResume: (() => void) | undefined;
     let lastSave = 0;
-    let latest: { cfi: string | null; fraction: number; sectionIndex: number | null } | null = null;
+    let latest: { cfi: string | null; xpointer: string | null; fraction: number; sectionIndex: number | null } | null = null;
     void (async () => {
       const book = await deps.getBook(bookId);
       if (!book || !(await deps.fileExists(book.fileName))) {
@@ -147,10 +149,11 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
       offProgress = bridge.onProgress((p) => {
         if (!resumed) return;
         const f = Math.min(1, Math.max(0, p.fraction));
-        latest = { cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex };
-        lastKnownRef.current = { bookId, cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex };
+        const xpointer = p.xpointer ?? null;
+        latest = { cfi: p.cfi, xpointer, fraction: f, sectionIndex: p.sectionIndex };
+        lastKnownRef.current = { bookId, cfi: p.cfi, xpointer, fraction: f, sectionIndex: p.sectionIndex };
         setFraction(f);
-        if (Date.now() - lastSave > 1000) { lastSave = Date.now(); void deps.saveProgress({ cfi: p.cfi, fraction: f, sectionIndex: p.sectionIndex }); void deps.touchLastRead(); }
+        if (Date.now() - lastSave > 1000) { lastSave = Date.now(); void deps.saveProgress({ ...latest }); void deps.touchLastRead(); }
       });
       bridge.onEngineError(() => { if (!cancelled) { setErrorKind('open_failed'); setState('error'); } });
       const offResume = bridge.onResumeApplied(() => { resumed = true; });
@@ -161,8 +164,8 @@ export function useReaderSession(bookId: string, depsOverride?: ReaderSessionDep
         const prog = await deps.getProgress(bookId);
         const lastKnown = lastKnownRef.current?.bookId === bookId ? lastKnownRef.current : null;
         const resume = lastKnown
-          ? { cfi: lastKnown.cfi, fraction: lastKnown.fraction }
-          : prog ? { cfi: prog.cfi, fraction: prog.fraction } : null;
+          ? { cfi: lastKnown.cfi, xpointer: lastKnown.xpointer, fraction: lastKnown.fraction }
+          : prog ? { cfi: prog.cfi, xpointer: prog.xpointer ?? null, fraction: prog.fraction } : null;
         const loaded = await bridge.openBook({ format: book.format, path: deps.bookPath(book.fileName), size: book.fileSize, resume });
         // theme resolved BEFORE transmission: the engine only knows concrete
         // themes (its cssFor still defaults 'auto'→'day' defensively). The

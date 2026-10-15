@@ -41,6 +41,9 @@ export type NewBook = Omit<Book, 'id'> & { id?: string };
 export interface ReadingProgress {
   bookId: string;
   cfi: string | null;
+  // KOReader XPointer of the same position (Library Manager / kosync shared
+  // format); null when unknown. cfi stays the local, engine-native anchor.
+  xpointer?: string | null;
   fraction: number;
   sectionIndex: number | null;
   updatedAt: number;

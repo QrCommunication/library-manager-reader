@@ -28,7 +28,8 @@ import { parseSidecar, serializeSidecar } from '../../core/progress/koreaderSide
 import { createLmAccountDeps } from '../../core/storage/expoSecureStore';
 import { lmClientFromAccount, lmInstallationId, lmIsConnected } from '../../core/remote/lmAccount';
 import { LmError, type LmBook, type LmBookDetails, type LmClient, type LmSpace, type LmVersion } from '../../core/remote/lmClient';
-import { applyServerProgress, matchRemoteBook, pushLocalChoice, syncSpaceProgress, type LmConflict } from '../../core/remote/lmSync';
+import { matchRemoteBook, syncSpaceProgress } from '../../core/remote/lmSync';
+import { promptReadingConflict } from '../sync/conflictPrompt';
 import { readyVersion, uploadBookFile } from '../../core/remote/lmTransfer';
 import { sha256HexOfBytes } from '../../core/remote/lmSha256';
 import { ensureCoverFile } from '../../core/remote/coverCache';
@@ -187,7 +188,8 @@ export function LibraryScreen() {
         cfi: null,
         fraction: parsed.percentFinished,
         sectionIndex: null,
-        updatedAt: parsed.lastRead !== null ? parsed.lastRead * 1000 : Date.now(),
+        // local change time: the sidecar's lastRead is another device's clock
+        updatedAt: Date.now(),
       });
       await refresh();
       showToast(t('library.sidecar.imported'));
@@ -484,7 +486,8 @@ export function LibraryScreen() {
       // remember the cloud identity so page-turns sync live from now on
       const imported = matchRemoteBook(rb, fresh);
       if (imported) {
-        await services.remoteSync.linkBook({ bookId: imported.id, spaceId: space.id, serverBookId: rb.id, versionId: version.id });
+        // sha256-verified bytes copied as-is: XPointers of this version apply
+        await services.remoteSync.linkBook({ bookId: imported.id, spaceId: space.id, serverBookId: rb.id, versionId: version.id, exactCopy: true });
       }
       return 'imported';
     } catch (err) {
@@ -575,13 +578,14 @@ export function LibraryScreen() {
       setLmBusy(true);
       try {
         const bytes = await services.fs.readBytes(services.paths.bookPath(book.id, book.format));
+        const localSha256 = await sha256HexOfBytes(bytes);
         const outcome = await uploadBookFile(
           { client, spaceId: space.id, fetchImpl: fetch, newId: uuidV7 },
           {
             filename: book.fileName,
             format: book.format,
             sizeBytes: bytes.length,
-            sha256: await sha256HexOfBytes(bytes),
+            sha256: localSha256,
           },
           bytes,
         );
@@ -595,7 +599,19 @@ export function LibraryScreen() {
           if (server) {
             const version = await readyDetails(client, space.id, server.id);
             if (version) {
-              await services.remoteSync.linkBook({ bookId: book.id, spaceId: space.id, serverBookId: server.id, versionId: version.id });
+              // exact only when the ready version IS the uploaded file (not a conversion)
+              const exactCopy = version.sha256.toLowerCase() === localSha256;
+              await services.remoteSync.linkBook({
+                bookId: book.id, spaceId: space.id, serverBookId: server.id, versionId: version.id, exactCopy,
+              });
+              // spec §7: confirm a local copy only when that version matches
+              // these local bytes — progress writes require the confirmation
+              if (exactCopy) {
+                await client.confirmLocalCopy(space.id, server.id, {
+                  installationId: await lmInstallationId(lmAccount),
+                  versionId: version.id, sha256: localSha256, sizeBytes: bytes.length,
+                });
+              }
             }
           }
         } else if (outcome === 'duplicate') showToast(t('library.remote.uploadDuplicate'), 'info');
@@ -609,53 +625,6 @@ export function LibraryScreen() {
     })();
   };
 
-  // conflicts demand an explicit choice (spec §8): no silent newest-wins. A
-  // raced 409 on the chosen write re-opens the same question with fresh data.
-  const askConflictChoice = (conflict: LmConflict): Promise<'server' | 'local' | null> =>
-    new Promise((resolve) => {
-      dialogAlert(
-        t('library.remote.conflictTitle'),
-        t('library.remote.conflictBody', {
-          title: conflict.remoteTitle,
-          server: Math.round(conflict.server.percent),
-          local: Math.round(conflict.local.fraction * 100),
-        }),
-        [
-          { text: t('library.remote.conflictServer'), onPress: () => resolve('server') },
-          { text: t('library.remote.conflictLocal'), onPress: () => resolve('local') },
-          { text: t('common.cancel'), style: 'cancel', onPress: () => resolve(null) },
-        ],
-      );
-    });
-
-  const resolveConflict = async (spaceId: string, installationId: string, conflict: LmConflict) => {
-    const client = lmClientRef.current;
-    if (!client) return;
-    for (;;) {
-      const choice = await askConflictChoice(conflict);
-      if (choice === null) return;
-      const syncDeps = {
-        client,
-        locals: localBooks,
-        getProgress: (id: string) => services.progress.getProgress(id),
-        saveProgress: (p: Parameters<typeof services.progress.saveProgress>[0]) => services.progress.saveProgress(p),
-        installationId,
-        newOperationId: uuidV7,
-      };
-      try {
-        if (choice === 'server') {
-          await applyServerProgress(syncDeps, conflict.localId, conflict.server);
-        } else {
-          await pushLocalChoice(syncDeps, spaceId, conflict);
-        }
-        return;
-      } catch (err) {
-        console.warn('[library] conflict resolution failed', err);
-        // fall through: re-ask until the user picks a side that sticks or cancels
-      }
-    }
-  };
-
   const syncProgress = () => {
     const client = lmClientRef.current;
     const space = activeSpace;
@@ -667,16 +636,17 @@ export function LibraryScreen() {
         const summary = await syncSpaceProgress({
           client,
           locals: localBooks,
-          getProgress: (id) => services.progress.getProgress(id),
-          saveProgress: (p) => services.progress.saveProgress(p),
+          repo: services.remoteSync,
+          progress: services.progress,
           installationId,
           newOperationId: uuidV7,
-          onLink: (localId, remoteId, versionId) => {
-            void services.remoteSync.linkBook({ bookId: localId, spaceId: space.id, serverBookId: remoteId, versionId });
-          },
+          linkBook: (localId, remoteId, versionId) =>
+            services.remoteSync.linkBook({ bookId: localId, spaceId: space.id, serverBookId: remoteId, versionId }),
         }, space.id, remoteBooks ?? []);
+        // conflicts demand an explicit choice (spec §8): both positions, their
+        // versions and dates; postponing keeps that book's sync paused
         for (const conflict of summary.conflicts) {
-          await resolveConflict(space.id, installationId, conflict);
+          await promptReadingConflict(services, conflict.localId, conflict.remoteTitle);
         }
         void inform(t('library.remote.title'), t('library.remote.syncDone', {
           pulled: summary.pulled, pushed: summary.pushed, inSync: summary.inSync,

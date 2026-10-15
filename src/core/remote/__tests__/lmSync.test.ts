@@ -1,81 +1,22 @@
-import {
-  matchRemoteBook, syncSpaceProgress, applyServerProgress, pushLocalChoice,
-  fractionToPercent, percentToFraction, progressUpdatedAtMs,
-  type LmConflict, type LmSyncDeps,
-} from '../lmSync';
-import { LmError } from '../lmClient';
-import type { LmBook, LmBookDetails, LmProgress } from '../lmClient';
-import type { ReadingProgress } from '../../../core/types';
+import { matchRemoteBook, progressUpdatedAtMs, syncSpaceProgress, type LmSyncDeps } from '../lmSync';
+import type { LmBook, LmBookDetails } from '../lmClient';
+import { fakeLmServer, makeSyncDb } from './fakeLmServer';
+
+const XP = '/body/DocFragment[2]/body/p[3]/text().12';
 
 const remote = (over: Partial<LmBook> = {}): LmBook => ({
   id: 'r1', title: 'Dune', author: 'F. Herbert', series: null, seriesIndex: null,
   updatedAt: 1, ...over,
 });
 
-const local = (over: {
-  id?: string; title?: string; author?: string | null; progress?: ReadingProgress | null;
-} = {}) => ({
-  id: over.id ?? 'b1',
-  title: over.title ?? 'Dune',
-  author: over.author ?? 'F. Herbert',
-  progress: over.progress !== undefined ? over.progress : null,
-});
-
-const progress = (over: Partial<ReadingProgress> = {}): ReadingProgress => ({
-  bookId: 'b1', cfi: 'epubcfi(/6/2)', fraction: 0.25, sectionIndex: 1, updatedAt: 1700000000000, ...over,
-});
-
-const serverProgress = (over: Partial<LmProgress> = {}): LmProgress => ({
-  bookId: 'r1', versionId: 'v1', cfi: 'epubcfi(/8/4)', chapterId: 'ch-2',
-  percent: 50, revision: 3, updatedAt: 1700000000, ...over,
-});
-
-const makeDeps = (
-  locals: ReturnType<typeof local>[],
-  remotes: Record<string, LmBookDetails> = {},
-  serverProgressByBook: Record<string, LmProgress | null> = {},
-) => {
-  const calls: string[] = [];
-  let operationSeq = 0;
-  const deps: LmSyncDeps = {
-    client: {
-      getBook: async (_spaceId: string, bookId: string) => {
-        calls.push(`details:${bookId}`);
-        return remotes[bookId] ?? { id: bookId, title: '', author: null, versions: [] };
-      },
-      getProgress: async (_spaceId: string, bookId: string, _versionId: string) => {
-        calls.push(`get:${bookId}`);
-        return serverProgressByBook[bookId] ?? null;
-      },
-      putProgress: async (_spaceId: string, bookId: string, op: { expectedRevision: number; versionId: string; percent: number; operationId: string; cfi: string | null }) => {
-        calls.push(`put:${bookId}:${op.expectedRevision}:${op.percent}:${op.operationId}:${op.cfi ?? ''}`);
-        return serverProgress(bookId === 'r1' ? {} : { bookId });
-      },
-    },
-    locals,
-    getProgress: async (bookId: string) => locals.find((l) => l.id === bookId)?.progress ?? null,
-    saveProgress: async (p: ReadingProgress) => {
-      calls.push(`save:${p.bookId}:${p.fraction}:${p.updatedAt}:${p.cfi ?? ''}`);
-    },
-    installationId: 'inst-1',
-    newOperationId: () => `op-${++operationSeq}`,
-  };
-  return { calls, deps };
-};
-
-const withReadyVersion = (bookId: string, versionId = 'v1'): Record<string, LmBookDetails> => ({
-  [bookId]: { id: bookId, title: '', author: null, versions: [{ id: versionId, format: 'epub', status: 'ready', sizeBytes: 1, sha256: 'a'.repeat(64) }] },
-});
+const ready = (versionId = 'v1'): LmBookDetails['versions'] => [{ id: versionId, format: 'epub', status: 'ready', sizeBytes: 1, sha256: 'a'.repeat(64) }];
 
 describe('helpers', () => {
-  it('converts between the local fraction and the wire percent', () => {
-    expect(fractionToPercent(0.125)).toBeCloseTo(12.5);
-    expect(percentToFraction(12.5)).toBeCloseTo(0.125);
-  });
-
   it('normalizes the server updatedAt whatever its unit', () => {
     expect(progressUpdatedAtMs(1700000000)).toBe(1700000000000);
     expect(progressUpdatedAtMs(1700000000123)).toBe(1700000000123);
+    expect(progressUpdatedAtMs('2023-11-14T22:13:20Z')).toBe(1700000000000);
+    expect(progressUpdatedAtMs('garbage')).toBe(0);
   });
 });
 
@@ -96,141 +37,76 @@ describe('matchRemoteBook', () => {
   });
 });
 
-describe('syncSpaceProgress', () => {
-  it('pushes the local position as a revision-0 operation when the server has none', async () => {
-    const { calls, deps } = makeDeps(
-      [local({ progress: progress() })],
-      withReadyVersion('r1'),
-      { r1: null },
-    );
-    const summary = await syncSpaceProgress(deps, 's1', [remote()]);
-    expect(summary).toMatchObject({ pulled: 0, pushed: 1, inSync: 0, none: 0, failed: 0 });
-    expect(summary.conflicts).toHaveLength(0);
-    expect(calls).toContain('details:r1');
-    expect(calls).toContain('put:r1:0:25:op-1:epubcfi(/6/2)');
-    expect(calls).toContain('get:r1');
-  });
-
-  it('pulls the server position onto the matched local book when it has none', async () => {
-    const { calls, deps } = makeDeps([local()], withReadyVersion('r1'), { r1: serverProgress() });
-    const summary = await syncSpaceProgress(deps, 's1', [remote()]);
-    expect(summary).toMatchObject({ pulled: 1, pushed: 0 });
-    // percent 50 → fraction 0.5; unix seconds on the wire → ms locally; cfi preserved
-    expect(calls).toContain('save:b1:0.5:1700000000000:epubcfi(/8/4)');
-  });
-
-  it('counts a diverging position as an explicit conflict, touching nothing', async () => {
-    const { calls, deps } = makeDeps(
-      [local({ progress: progress({ fraction: 0.2, updatedAt: 1690000000000 }) })],
-      withReadyVersion('r1'),
-      { r1: serverProgress({ percent: 80 }) },
-    );
-    const summary = await syncSpaceProgress(deps, 's1', [remote()]);
-    expect(summary.pulled).toBe(0);
-    expect(summary.pushed).toBe(0);
-    expect(summary.conflicts).toHaveLength(1);
-    const conflict = summary.conflicts[0]!;
-    expect(conflict).toMatchObject({ remoteId: 'r1', localId: 'b1', versionId: 'v1' });
-    expect(conflict.server.percent).toBe(80);
-    expect(conflict.local.fraction).toBe(0.2);
-    expect(calls).toEqual(['details:r1', 'get:r1']);
-  });
-
-  it('skips matched books already at the same fraction', async () => {
-    const { calls, deps } = makeDeps(
-      [local({ progress: progress({ fraction: 0.50001 }) })],
-      withReadyVersion('r1'),
-      { r1: serverProgress({ percent: 50 }) },
-    );
-    const summary = await syncSpaceProgress(deps, 's1', [remote()]);
-    expect(summary).toMatchObject({ inSync: 1, pulled: 0, pushed: 0 });
-    expect(calls).toEqual(['details:r1', 'get:r1']);
-  });
-
-  it('ignores remote books without a local counterpart and books without any position', async () => {
-    const { calls, deps } = makeDeps([local()], withReadyVersion('r1'), {});
-    const summary = await syncSpaceProgress(deps, 's1', [remote({ id: 'r9', title: 'Elsewhere' }), remote()]);
-    expect(summary).toMatchObject({ pulled: 0, pushed: 0, inSync: 0, none: 1, failed: 0 });
-    expect(calls).toEqual(['details:r1', 'get:r1']);
-  });
-
-  it('skips remotes with no ready version as nothing-to-do', async () => {
-    const { calls, deps } = makeDeps(
-      [local({ progress: progress() })],
-      { r1: { id: 'r1', title: '', author: null, versions: [{ id: 'v2', format: 'epub', status: 'processing', sizeBytes: 1, sha256: 'a'.repeat(64) }] } },
-    );
-    const summary = await syncSpaceProgress(deps, 's1', [remote()]);
-    expect(summary).toMatchObject({ pulled: 0, pushed: 0, inSync: 0, none: 1, failed: 0 });
-    expect(calls).toEqual(['details:r1']);
-  });
-
-  it('counts a failing exchange and keeps syncing the rest', async () => {
-    const calls: string[] = [];
-    let operationSeq = 0;
-    const locals = [
-      local({ id: 'b1', title: 'Broken' }),
-      local({ id: 'b2', title: 'Good', progress: progress({ bookId: 'b2', fraction: 0.6, cfi: null }) }),
-    ];
+describe('syncSpaceProgress — link, then the shared revision-based reconciliation', () => {
+  const setup = async (versions: Record<string, LmBookDetails['versions']> = { r1: ready() }) => {
+    const env = await makeSyncDb(['b1', 'b2']);
+    const server = fakeLmServer();
+    let seq = 0;
+    let now = 10_000;
     const deps: LmSyncDeps = {
       client: {
-        getBook: async (_s: string, bookId: string) => withReadyVersion(bookId)[bookId]!,
-        getProgress: async (_s: string, bookId: string) => {
-          if (bookId === 'r1') throw new Error('boom');
-          calls.push(`get:${bookId}`);
-          return null;
-        },
-        putProgress: async (_s: string, bookId: string, op: { expectedRevision: number; percent: number; operationId: string }) => {
-          calls.push(`put:${bookId}:${op.expectedRevision}:${op.percent}:${op.operationId}`);
-          return serverProgress({ bookId });
-        },
+        ...server.client,
+        getBook: async (_s: string, id: string) => ({ id, title: '', author: null, versions: versions[id] ?? [] }),
       },
-      locals,
-      getProgress: async (bookId: string) => locals.find((l) => l.id === bookId)?.progress ?? null,
-      saveProgress: async () => {},
-      installationId: 'inst-1',
-      newOperationId: () => `op-${++operationSeq}`,
+      locals: [{ id: 'b1', title: 'Dune', author: 'F. Herbert' }, { id: 'b2', title: 'Fondation', author: null }],
+      repo: env.repo,
+      progress: env.progress,
+      installationId: 'inst',
+      newOperationId: () => `op-${++seq}`,
+      now: () => now,
+      // server book ids double as fake-server keys
+      linkBook: (localId, remoteId, versionId) => env.repo.linkBook({ bookId: localId, spaceId: 's1', serverBookId: remoteId, versionId }),
     };
-    const summary = await syncSpaceProgress(deps, 's1', [remote({ id: 'r1', title: 'Broken' }), remote({ id: 'r2', title: 'Good' })]);
-    expect(summary).toMatchObject({ pulled: 0, pushed: 1, failed: 1 });
-    expect(calls).toContain('put:r2:0:60:op-1');
-  });
-});
-
-describe('conflict resolution', () => {
-  const conflict = (over: Partial<LmConflict> = {}): LmConflict => ({
-    remoteId: 'r1',
-    remoteTitle: 'Dune',
-    localId: 'b1',
-    versionId: 'v1',
-    server: serverProgress({ percent: 80, revision: 5 }),
-    local: progress({ fraction: 0.2, updatedAt: 1690000000000 }),
-    ...over,
-  });
-
-  it('applyServerProgress writes the server percent and anchor onto the local book', async () => {
-    const { calls, deps } = makeDeps([local()]);
-    await applyServerProgress(deps, 'b1', conflict().server);
-    expect(calls).toContain('save:b1:0.8:1700000000000:epubcfi(/8/4)');
-  });
-
-  it('pushLocalChoice re-reads the server revision, then sends a fresh operation', async () => {
-    const { calls, deps } = makeDeps([local()], withReadyVersion('r1'), { r1: serverProgress({ percent: 80, revision: 5 }) });
-    await pushLocalChoice(deps, 's1', conflict());
-    expect(calls).toContain('get:r1');
-    expect(calls).toContain('put:r1:5:20:op-1:epubcfi(/6/2)');
-  });
-
-  it('pushLocalChoice uses revision 0 when the server progress vanished meanwhile', async () => {
-    const { calls, deps } = makeDeps([local()], withReadyVersion('r1'), {});
-    await pushLocalChoice(deps, 's1', conflict());
-    expect(calls).toContain('put:r1:0:20:op-1:epubcfi(/6/2)');
-  });
-
-  it('pushLocalChoice lets a raced 409 propagate: the UI re-presents the choice', async () => {
-    const { deps } = makeDeps([local()], withReadyVersion('r1'), { r1: serverProgress({ revision: 5 }) });
-    deps.client.putProgress = async () => {
-      throw new LmError('conflict', '409 revisionConflict', 'revisionConflict');
+    const read = (bookId: string, fraction: number) => {
+      now += 1000;
+      return env.progress.saveProgress({ bookId, cfi: null, xpointer: XP, fraction, sectionIndex: null, updatedAt: now });
     };
-    await expect(pushLocalChoice(deps, 's1', conflict())).rejects.toMatchObject({ kind: 'conflict' });
+    return { ...env, server, deps, read };
+  };
+
+  it('pushes a local position (percentage only for a title-matched copy) and links the book', async () => {
+    const { deps, server, repo, read } = await setup();
+    await read('b1', 0.25);
+    const summary = await syncSpaceProgress(deps, 's1', [remote()]);
+    expect(summary).toMatchObject({ pushed: 1, pulled: 0, failed: 0, conflicts: [] });
+    expect(server.puts[0]!.op).toMatchObject({ expectedRevision: 0, percentage: 0.25, progress: null });
+    expect(await repo.getLink('b1')).toMatchObject({ serverBookId: 'r1', versionId: 'v1', lastRevision: 1 });
+  });
+
+  it('pulls a server position onto an untouched local book', async () => {
+    const { deps, server, progress } = await setup();
+    server.otherDeviceWrites('r1', 0.5);
+    expect(await syncSpaceProgress(deps, 's1', [remote()])).toMatchObject({ pulled: 1 });
+    expect(await progress.getProgress('b1')).toMatchObject({ fraction: 0.5 });
+  });
+
+  it('a second pass is in sync — relinking keeps the revision baseline (no forced 409)', async () => {
+    const { deps, server, read } = await setup();
+    await read('b1', 0.25);
+    await syncSpaceProgress(deps, 's1', [remote()]);
+    expect(await syncSpaceProgress(deps, 's1', [remote()])).toMatchObject({ inSync: 1, pushed: 0, conflicts: [] });
+    expect(server.puts).toHaveLength(1);
+  });
+
+  it('reports a divergence as a conflict for an explicit choice, writing nothing', async () => {
+    const { deps, server, read } = await setup();
+    await read('b1', 0.25);
+    await syncSpaceProgress(deps, 's1', [remote()]);
+    server.otherDeviceWrites('r1', 0.8);
+    await read('b1', 0.3);
+    const summary = await syncSpaceProgress(deps, 's1', [remote()]);
+    expect(summary.conflicts).toEqual([{ localId: 'b1', remoteTitle: 'Dune' }]);
+    expect(server.state.get('r1')).toMatchObject({ percentage: 0.8 });
+  });
+
+  it('counts remotes without a ready version as nothing-to-do and failures separately', async () => {
+    const { deps, read } = await setup({ r1: [] , r2: ready() });
+    await read('b2', 0.4);
+    deps.client.getBook = async (_s: string, id: string) => {
+      if (id === 'r2') throw new Error('boom');
+      return { id, title: '', author: null, versions: [] };
+    };
+    const summary = await syncSpaceProgress(deps, 's1', [remote(), remote({ id: 'r2', title: 'Fondation', author: null })]);
+    expect(summary).toMatchObject({ none: 1, failed: 1 });
   });
 });
