@@ -12,7 +12,7 @@ export interface TtsSentencePayload { text: string; cfi: string | null }
 export class ReaderBridge {
   private readyPromise: Promise<number>;
   private resolveReady!: (v: number) => void;
-  private progressCbs = new Set<(p: { cfi: string | null; fraction: number; sectionIndex: number | null }) => void>();
+  private progressCbs = new Set<(p: { cfi: string | null; xpointer: string | null; fraction: number; sectionIndex: number | null }) => void>();
   private errorCbs = new Set<(e: { code: string; message: string }) => void>();
   private selectionCbs = new Set<(s: SelectionPayload) => void>();
   private searchResultCbs = new Set<(r: SearchResultPayload) => void>();
@@ -57,7 +57,7 @@ export class ReaderBridge {
         for (const cb of this.resumeCbs) cb();
         break;
       case 'progress':
-        for (const cb of this.progressCbs) cb({ cfi: msg.cfi, fraction: msg.fraction, sectionIndex: msg.sectionIndex });
+        for (const cb of this.progressCbs) cb({ cfi: msg.cfi, xpointer: msg.xpointer ?? null, fraction: msg.fraction, sectionIndex: msg.sectionIndex });
         break;
       case 'bookmarkCaptured':
         if (this.bookmarkWaiter) {
@@ -141,7 +141,7 @@ export class ReaderBridge {
     });
   }
 
-  onProgress(cb: (p: { cfi: string | null; fraction: number; sectionIndex: number | null }) => void): () => void {
+  onProgress(cb: (p: { cfi: string | null; xpointer: string | null; fraction: number; sectionIndex: number | null }) => void): () => void {
     this.progressCbs.add(cb);
     return () => this.progressCbs.delete(cb);
   }

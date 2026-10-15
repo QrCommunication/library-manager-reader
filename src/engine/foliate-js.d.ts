@@ -7,6 +7,8 @@ declare module 'foliate-js/view.js' {
     metadata?: Record<string, unknown>;
     toc?: unknown;
     getCover?: () => Promise<Blob | null>;
+    // spine order: index i is KOReader's DocFragment[i + 1]
+    sections?: { createDocument?: () => Promise<Document> }[];
   }
   // pure parsing (zip/mobi/fb2) — no renderer, safe for headless extraction
   export function makeBook(file: Blob): Promise<FoliateBook>;

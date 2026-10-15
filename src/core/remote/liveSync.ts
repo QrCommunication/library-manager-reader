@@ -6,7 +6,7 @@
 // re-attempts instead of looping against other devices.
 
 import { LmError, type LmClient, type LmProgress } from './lmClient';
-import type { RemoteSyncRepo } from '../../db/remoteSyncRepo';
+import type { PendingProgressOp, RemoteSyncRepo } from '../../db/remoteSyncRepo';
 
 export interface LiveSyncDeps {
   client: Pick<LmClient, 'putProgress'>;
@@ -69,7 +69,7 @@ async function drain(deps: LiveSyncDeps): Promise<FlushSummary> {
 
 async function push(
   deps: LiveSyncDeps,
-  op: { spaceId: string; serverBookId: string; versionId: string; operationId: string; cfi: string | null; chapterId: string | null; percent: number; bookId: string },
+  op: Pick<PendingProgressOp, 'spaceId' | 'serverBookId' | 'versionId' | 'progress' | 'percentage'>,
   expectedRevision: number,
   operationId: string,
 ): Promise<LmProgress> {
@@ -78,8 +78,7 @@ async function push(
     operationId,
     expectedRevision,
     versionId: op.versionId,
-    cfi: op.cfi,
-    chapterId: op.chapterId,
-    percent: op.percent,
+    progress: op.progress,
+    percentage: op.percentage,
   });
 }

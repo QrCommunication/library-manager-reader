@@ -7,6 +7,8 @@ import { createChunkAssembler } from './chunkAssembler';
 import { convertCbrToCbz } from './extractMode';
 import { fractionForSection } from './searchFraction';
 import { ssmlToText } from './ssml';
+import { boundaryToXPointer, xpointerToRange } from './xpointer';
+import { parseXPointer } from '../core/progress/xpointer';
 import { createExtractorFromData } from 'node-unrar-js';
 import { zipSync, strToU8 } from 'fflate';
 import type { BookFormat, BookMetadata, HighlightColor, OriginalFormat, ReaderSettings, TocItem } from '../core/types';
@@ -322,12 +324,40 @@ const fractionForCfi = async (cfi: string): Promise<number> => {
   } catch { return 0; }
 };
 
+// KOReader XPointer of the visible range start — the shared Library Manager /
+// kosync position format. EPUB only: foliate's MOBI/AZW3 HTML is a conversion
+// whose structure KOReader never sees, so those books report null and sync
+// rides the fraction alone (never a position derived from it)
+const xpointerOf = (index: number | null, range: Range | null | undefined): string | null => {
+  if (openFormat !== 'epub' || index === null || !range) return null;
+  const doc = range.startContainer.ownerDocument;
+  const total = view.book?.sections?.length ?? 0;
+  if (!doc || total === 0) return null;
+  try { return boundaryToXPointer(doc, index, total, range.startContainer, range.startOffset); } catch { return null; }
+};
+
+// resume from an XPointer (server/kosync position, no local cfi yet): resolved
+// on a fresh parse of the section's source XHTML, then expressed as the cfi
+// foliate navigates to. Null (unresolvable, ambiguous, other format) → the
+// caller falls back to the fraction.
+const cfiFromXPointer = async (xpointer: string): Promise<string | null> => {
+  if (openFormat !== 'epub') return null;
+  const parsed = parseXPointer(xpointer);
+  const section = parsed ? view.book?.sections?.[parsed.sectionIndex] : undefined;
+  if (!parsed || !section?.createDocument) return null;
+  try {
+    const range = xpointerToRange(await section.createDocument(), parsed);
+    return range ? view.getCFI(parsed.sectionIndex, range) : null;
+  } catch { return null; }
+};
+
 view.addEventListener('relocate', (e: Event) => {
   const d = (e as CustomEvent).detail;
   lastFraction = d?.fraction ?? lastFraction;
   // installed foliate relocate detail has section: { current, total }
   sectionCount = d?.section?.total ?? sectionCount;
-  send({ type: 'progress', cfi: d?.cfi ?? null, fraction: d?.fraction ?? 0, sectionIndex: d?.section?.current ?? null });
+  const sectionIndex: number | null = d?.section?.current ?? null;
+  send({ type: 'progress', cfi: d?.cfi ?? null, xpointer: xpointerOf(sectionIndex, d?.range), fraction: d?.fraction ?? 0, sectionIndex });
 });
 
 // Highlights are drawn inside the engine via foliate's Overlayer. The record map
@@ -375,7 +405,7 @@ let openFormat: BookFormat = 'epub';
 // resume target carried by openBook: applied via view.init({lastLocation}) /
 // a serialized post-init goToFraction — foliate's sanctioned single navigation
 // after the first render, instead of a race-prone message burst from the app
-let openResume: { cfi?: string | null; fraction?: number } | null = null;
+let openResume: { cfi?: string | null; xpointer?: string | null; fraction?: number } | null = null;
 
 // foliate's makeBook sniffs the format from file.name (isCBZ/isFB2 call
 // name.endsWith), so a nameless Blob crashes on every zip-based book
@@ -572,14 +602,18 @@ async function handle(msg: AppToEngine): Promise<void> {
             // renderer.goTo(resolved) runs after the first render, in the same
             // task as init — the app cannot interleave a navigation on top of it
             const resume = openResume;
-            if (resume?.cfi) {
+            // the local cfi (this device, these bytes) wins; a server/kosync
+            // XPointer is translated to a cfi only when no local one exists
+            const resumeCfi = resume?.cfi
+              ?? (resume?.xpointer ? await cfiFromXPointer(resume.xpointer) : null);
+            if (resumeCfi) {
               try {
-                await view.init({ lastLocation: resume.cfi });
+                await view.init({ lastLocation: resumeCfi });
               } catch {
                 // stale/invalid cfi (file changed, section indices moved): fall
                 // back to a plain first render + fraction — never fail the open
                 await view.init({});
-                if (typeof resume.fraction === 'number') await view.goToFraction(resume.fraction);
+                if (typeof resume?.fraction === 'number') await view.goToFraction(resume.fraction);
               }
             } else {
               await view.init({});

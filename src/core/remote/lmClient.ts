@@ -7,6 +7,7 @@
 import { LM_CLIENT_ID, LM_REDIRECT_URI } from './lmPkce';
 import { sha256HexOfBytes } from './lmSha256';
 import type { LmTokens } from './lmTokens';
+import { xpointerOrNull } from '../progress/xpointer';
 
 export const LM_BASE_URL = 'https://library-manager.com';
 
@@ -158,24 +159,59 @@ export interface LmUploadPlan {
   upload: { url: string; method: string; headers: Record<string, string> };
 }
 export interface LmImportStatus { id: string; status: string }
+/**
+ * Personal progress of one version, KOReader contract: progress is a
+ * CREngine/KOReader XPointer (or null when no precise anchor exists — legacy
+ * CFI/JSON coordinates are no longer exposed), percentage a fraction 0..1.
+ * updatedAtMs is normalized client-side (the wire value may be unix seconds,
+ * milliseconds or an ISO instant).
+ */
 export interface LmProgress {
   bookId: string;
   versionId: string;
-  cfi: string | null;
-  chapterId: string | null;
-  percent: number;
+  progress: string | null;
+  percentage: number;
   revision: number;
-  updatedAt: number;
+  updatedAtMs: number;
 }
+/** PUT body — cfi / chapterId / percent are refused (validationFailed) */
 export interface LmProgressOp {
   installationId: string;
   operationId: string;
   expectedRevision: number;
   versionId: string;
-  cfi: string | null;
-  chapterId: string | null;
-  percent: number;
+  progress: string | null;
+  percentage: number;
 }
+
+const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
+
+/** wire timestamp → epoch ms (seconds, ms or ISO 8601); 0 when unreadable */
+export function progressUpdatedAtMs(updatedAt: unknown): number {
+  if (typeof updatedAt === 'number' && Number.isFinite(updatedAt)) return updatedAt > 1e12 ? updatedAt : updatedAt * 1000;
+  if (typeof updatedAt === 'string') {
+    const ms = Date.parse(updatedAt);
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  return 0;
+}
+
+/** defensive read of a progress payload; null for "no progress" */
+export function normalizeLmProgress(raw: unknown): LmProgress | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const percentage = typeof r.percentage === 'number' && Number.isFinite(r.percentage) ? clamp01(r.percentage) : null;
+  if (percentage === null || typeof r.revision !== 'number') throw new LmError('server', 'progress: unexpected payload');
+  return {
+    bookId: String(r.bookId ?? ''),
+    versionId: String(r.versionId ?? ''),
+    progress: xpointerOrNull(r.progress),
+    percentage,
+    revision: r.revision,
+    updatedAtMs: progressUpdatedAtMs(r.updatedAt),
+  };
+}
+
 export interface LmMe { account?: { id?: string; email?: string; name?: string } }
 
 interface BusinessErrorBody { error?: { code?: string; details?: unknown } }
@@ -325,16 +361,34 @@ export class LmClient {
   getProgress(spaceId: string, bookId: string, versionId: string): Promise<LmProgress | null> {
     return this.call(`/api/v1/mobile/spaces/${spaceId}/books/${bookId}/progress?versionId=${versionId}`)
       .then((r) => r.json())
-      .then((data: LmProgress | null) => data ?? null);
+      .then(normalizeLmProgress);
   }
 
-  /** revision-checked write; a 409 surfaces as LmError('conflict', …, 'revisionConflict', details) */
+  /**
+   * revision-checked write; a 409 surfaces as LmError('conflict', …, 'revisionConflict', details).
+   * The body is re-sanitized here: only a valid XPointer (else null) and a
+   * fraction clamped to 0..1 ever leave the device.
+   */
   putProgress(spaceId: string, bookId: string, op: LmProgressOp): Promise<LmProgress> {
+    const body: LmProgressOp = {
+      installationId: op.installationId,
+      operationId: op.operationId,
+      expectedRevision: op.expectedRevision,
+      versionId: op.versionId,
+      progress: xpointerOrNull(op.progress),
+      percentage: clamp01(op.percentage),
+    };
     return this.call(`/api/v1/mobile/spaces/${spaceId}/books/${bookId}/progress`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(op),
-    }).then((r) => r.json());
+      body: JSON.stringify(body),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const receipt = normalizeLmProgress(data);
+        if (!receipt) throw new LmError('server', 'progress: empty receipt');
+        return receipt;
+      });
   }
 }
 

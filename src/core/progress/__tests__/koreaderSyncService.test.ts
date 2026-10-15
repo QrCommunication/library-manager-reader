@@ -107,6 +107,22 @@ describe('conflict resolution helpers', () => {
     await expect(pushLocalProgress(deps, 'digest-1', localProgress(0.35))).resolves.toBe(true);
     expect(calls).toContain('put:35.0:0.35');
   });
+
+  it('pushLocalProgress sends the local XPointer as KOReader progress when known', async () => {
+    const { deps, calls } = makeDeps({});
+    const xp = '/body/DocFragment[3]/body/p[2]/text().17';
+    await pushLocalProgress(deps, 'digest-1', { fraction: 0.35, xpointer: xp });
+    expect(calls).toContain(`put:${xp}:0.35`);
+  });
+
+  it('applyServerProgress keeps a KOReader XPointer and ignores a non-XPointer progress', async () => {
+    const { deps, getLocal } = makeDeps({});
+    const xp = '/body/DocFragment[3]/body/p[2]/text().17';
+    await applyServerProgress(deps, 'b1', { ...serverProgress(0.9), progress: xp });
+    expect(getLocal()).toMatchObject({ fraction: 0.9, cfi: null, xpointer: xp });
+    await applyServerProgress(deps, 'b1', { ...serverProgress(0.9), progress: '90.0' });
+    expect(getLocal()).toMatchObject({ xpointer: null });
+  });
 });
 
 describe('syncLibraryProgress', () => {

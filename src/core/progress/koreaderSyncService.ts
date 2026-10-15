@@ -1,6 +1,7 @@
 import { partialMd5Hex } from './partialMd5';
 import type { KoSyncClient } from './koreaderSync';
 import type { ReadingProgress } from '../types';
+import { xpointerOrNull } from './xpointer';
 
 export interface BookSyncDeps {
   readAt(path: string, offset: number, length: number): Promise<Uint8Array | null>;
@@ -18,7 +19,9 @@ export type BookSyncResult =
       kind: 'conflict';
       digest: string;
       server: number;
+      serverProgress: string | null;
       local: number;
+      localXPointer: string | null;
       serverTimestamp: number | null;
       localUpdatedAt: number;
     };
@@ -50,7 +53,9 @@ export async function syncBookProgress(
     kind: 'conflict',
     digest,
     server: server!.percentage,
+    serverProgress: server!.progress,
     local: local!.fraction,
+    localXPointer: local!.xpointer ?? null,
     serverTimestamp: server!.timestamp,
     localUpdatedAt: local!.updatedAt,
   };
@@ -85,10 +90,10 @@ export async function syncLibraryProgress(
         summary.conflicts++;
         const serverMs = (r.serverTimestamp ?? 0) * 1000;
         if (serverMs > r.localUpdatedAt) {
-          await applyServerProgress(deps, book.id, { percentage: r.server, timestamp: r.serverTimestamp });
+          await applyServerProgress(deps, book.id, { percentage: r.server, progress: r.serverProgress, timestamp: r.serverTimestamp });
           summary.pulled++;
         } else {
-          await pushLocalProgress(deps, r.digest, { fraction: r.local });
+          await pushLocalProgress(deps, r.digest, { fraction: r.local, xpointer: r.localXPointer });
           summary.pushed++;
         }
       }
@@ -102,13 +107,15 @@ export async function syncLibraryProgress(
 export async function applyServerProgress(
   deps: BookSyncDeps,
   bookId: string,
-  server: { percentage: number; timestamp: number | null },
+  server: { percentage: number; progress?: string | null; timestamp: number | null },
 ): Promise<void> {
-  // a KOReader percentage cannot resolve to our cfis: drop it, the reader
-  // resumes from the fraction (engine-side init/goToFraction handles that)
+  // the kosync document key is the partial MD5 of THIS file, so a KOReader
+  // XPointer addresses these exact bytes: keep it (the engine resolves it on
+  // open, else falls back to the fraction). Our cfi cannot be derived here.
   await deps.saveProgress({
     bookId,
     cfi: null,
+    xpointer: xpointerOrNull(server.progress),
     fraction: server.percentage,
     sectionIndex: null,
     updatedAt: server.timestamp !== null ? server.timestamp * 1000 : Date.now(),
@@ -118,7 +125,9 @@ export async function applyServerProgress(
 export async function pushLocalProgress(
   deps: BookSyncDeps,
   digest: string,
-  local: Pick<ReadingProgress, 'fraction'>,
+  local: Pick<ReadingProgress, 'fraction' | 'xpointer'>,
 ): Promise<boolean> {
-  return deps.client.updateProgress(digest, progressString(local.fraction), local.fraction);
+  // KOReader reads `progress` as an XPointer for reflowable books; the legacy
+  // percent string only remains when no precise anchor is known
+  return deps.client.updateProgress(digest, xpointerOrNull(local.xpointer) ?? progressString(local.fraction), local.fraction);
 }

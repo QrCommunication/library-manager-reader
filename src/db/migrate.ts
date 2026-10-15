@@ -1,6 +1,6 @@
 import type { DbDriver } from './driver';
 
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -86,13 +86,38 @@ const MIGRATIONS: Record<number, string> = {
     );
     CREATE INDEX idx_progress_journal_book ON progress_journal(book_id, created_at);
   `,
+  // Library Manager switched its reading contract to KOReader positions
+  // (progress XPointer + percentage 0..1); legacy cfi/chapterId/percent bodies
+  // are refused with validationFailed and must not be retried. Pending legacy
+  // ops are dropped — never rewritten under their operationId — while the
+  // local position (reading_progress) is kept: the next save re-journals it in
+  // the new format against the re-read server revision.
+  5: `
+    ALTER TABLE reading_progress ADD COLUMN xpointer TEXT;
+    ALTER TABLE remote_books ADD COLUMN exact_copy INTEGER NOT NULL DEFAULT 0;
+    DROP INDEX idx_progress_journal_book;
+    DROP TABLE progress_journal;
+    CREATE TABLE progress_journal (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      space_id TEXT NOT NULL,
+      server_book_id TEXT NOT NULL,
+      version_id TEXT NOT NULL,
+      operation_id TEXT NOT NULL,
+      progress TEXT,
+      percentage REAL NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX idx_progress_journal_book ON progress_journal(book_id, created_at);
+  `,
 };
 
-export async function migrate(db: DbDriver): Promise<void> {
+// targetVersion exists for upgrade tests (simulate an install stuck at an older schema)
+export async function migrate(db: DbDriver, targetVersion: number = CURRENT_SCHEMA_VERSION): Promise<void> {
   await db.exec('PRAGMA foreign_keys = ON;');
   const row = await db.get<{ user_version: number }>('PRAGMA user_version');
   const current = row?.user_version ?? 0;
-  for (let v = current + 1; v <= CURRENT_SCHEMA_VERSION; v++) {
+  for (let v = current + 1; v <= targetVersion; v++) {
     const sql = MIGRATIONS[v];
     if (!sql) throw new Error(`Missing migration for schema version ${v}`);
     // each step is transactional: a crash or failure mid-script must not leave

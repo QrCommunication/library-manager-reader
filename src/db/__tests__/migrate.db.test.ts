@@ -119,6 +119,7 @@ describe('migrate', () => {
       fraction: 0.42,
       section_index: 3,
       updated_at: t + 1,
+      xpointer: null,
     });
     await expect(db.get('SELECT * FROM bookmarks WHERE id = ?', ['bm1'])).resolves.toEqual({
       id: 'bm1',
@@ -167,6 +168,37 @@ describe('migrate', () => {
       series: 'Fondation',
       series_index: 1,
     });
+  });
+
+  it('upgrades v4 → v5: KOReader journal, legacy CFI ops dropped, positions and links kept', async () => {
+    const db = makeDb();
+    await migrate(db, 4);
+    const t = 1700000000000;
+    await db.run(
+      'INSERT INTO books (id,title,format,file_name,file_size,added_at,updated_at) VALUES (?,?,?,?,?,?,?)',
+      ['bk1', 'Dune', 'epub', 'd.epub', 1, t, t],
+    );
+    await db.run('INSERT INTO reading_progress (book_id,cfi,fraction,section_index,updated_at) VALUES (?,?,?,?,?)', ['bk1', 'epubcfi(/6/4)', 0.42, 3, t]);
+    await db.run('INSERT INTO remote_books (book_id,space_id,server_book_id,version_id,last_revision,updated_at) VALUES (?,?,?,?,?,?)', ['bk1', 's1', 'sb1', 'v1', 7, t]);
+    await db.run(
+      'INSERT INTO progress_journal (book_id,space_id,server_book_id,version_id,operation_id,cfi,chapter_id,percent,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      ['bk1', 's1', 'sb1', 'v1', 'op-legacy', 'epubcfi(/6/4)', null, 42, t],
+    );
+
+    await migrate(db);
+
+    expect((await db.get<{ user_version: number }>('PRAGMA user_version'))?.user_version).toBe(5);
+    // the local position survives; it has no XPointer yet
+    await expect(db.get('SELECT cfi, fraction, xpointer FROM reading_progress WHERE book_id = ?', ['bk1']))
+      .resolves.toEqual({ cfi: 'epubcfi(/6/4)', fraction: 0.42, xpointer: null });
+    // the link survives (revision baseline included), not yet proven byte-exact
+    await expect(db.get('SELECT last_revision, exact_copy FROM remote_books WHERE book_id = ?', ['bk1']))
+      .resolves.toEqual({ last_revision: 7, exact_copy: 0 });
+    // a legacy CFI op is never replayed (nor rewritten under its operationId)
+    await expect(db.all('SELECT * FROM progress_journal')).resolves.toEqual([]);
+    const cols = (await db.all<{ name: string }>('PRAGMA table_info(progress_journal)')).map((c) => c.name);
+    expect(cols).toEqual(expect.arrayContaining(['progress', 'percentage']));
+    expect(cols).not.toEqual(expect.arrayContaining(['cfi']));
   });
 
   it('enables foreign keys with cascade delete', async () => {

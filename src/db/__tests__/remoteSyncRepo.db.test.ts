@@ -31,7 +31,7 @@ describe('remoteSyncRepo', () => {
     const { books, repo } = await makeServices();
     await books.add('b1');
     await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    expect(await repo.getLink('b1')).toEqual({ spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
+    expect(await repo.getLink('b1')).toEqual({ spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', exactCopy: false });
     expect(await repo.getLink('nope')).toBeNull();
   });
 
@@ -50,14 +50,24 @@ describe('remoteSyncRepo', () => {
     const { books, repo } = await makeServices();
     await books.add('b1');
     await books.add('b2');
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: 'c1', chapterId: null, percent: 10 });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o2', cfi: 'c2', chapterId: null, percent: 20 });
-    await repo.enqueueOp({ bookId: 'b2', spaceId: 's1', serverBookId: 'sb2', versionId: 'v2', operationId: 'o3', cfi: null, chapterId: null, percent: 30 });
+    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', progress: '/body/DocFragment[1]/body/p/text().1', percentage: 0.1 });
+    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o2', progress: '/body/DocFragment[1]/body/p/text().2', percentage: 0.2 });
+    await repo.enqueueOp({ bookId: 'b2', spaceId: 's1', serverBookId: 'sb2', versionId: 'v2', operationId: 'o3', progress: null, percentage: 0.3 });
     const pending = await repo.pendingOps();
     expect(pending).toHaveLength(2);
-    expect(pending[0]).toMatchObject({ bookId: 'b1', operationId: 'o2', percent: 20 });
+    expect(pending[0]).toMatchObject({ bookId: 'b1', operationId: 'o2', progress: '/body/DocFragment[1]/body/p/text().2', percentage: 0.2 });
     expect(pending[1]).toMatchObject({ bookId: 'b2', operationId: 'o3' });
     await repo.removeOp(pending[0]!.id);
     expect((await repo.pendingOps()).map((o) => o.bookId)).toEqual(['b2']);
+  });
+
+  it('exactCopy: a same-version relink never downgrades a verified copy; a new version resets it', async () => {
+    const { books, repo } = await makeServices();
+    await books.add('b1');
+    await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', exactCopy: true });
+    await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
+    expect(await repo.getLink('b1')).toMatchObject({ versionId: 'v1', exactCopy: true });
+    await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v2' });
+    expect(await repo.getLink('b1')).toMatchObject({ versionId: 'v2', exactCopy: false });
   });
 });

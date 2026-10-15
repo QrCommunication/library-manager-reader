@@ -484,7 +484,8 @@ export function LibraryScreen() {
       // remember the cloud identity so page-turns sync live from now on
       const imported = matchRemoteBook(rb, fresh);
       if (imported) {
-        await services.remoteSync.linkBook({ bookId: imported.id, spaceId: space.id, serverBookId: rb.id, versionId: version.id });
+        // sha256-verified bytes copied as-is: XPointers of this version apply
+        await services.remoteSync.linkBook({ bookId: imported.id, spaceId: space.id, serverBookId: rb.id, versionId: version.id, exactCopy: true });
       }
       return 'imported';
     } catch (err) {
@@ -575,13 +576,14 @@ export function LibraryScreen() {
       setLmBusy(true);
       try {
         const bytes = await services.fs.readBytes(services.paths.bookPath(book.id, book.format));
+        const localSha256 = await sha256HexOfBytes(bytes);
         const outcome = await uploadBookFile(
           { client, spaceId: space.id, fetchImpl: fetch, newId: uuidV7 },
           {
             filename: book.fileName,
             format: book.format,
             sizeBytes: bytes.length,
-            sha256: await sha256HexOfBytes(bytes),
+            sha256: localSha256,
           },
           bytes,
         );
@@ -595,7 +597,11 @@ export function LibraryScreen() {
           if (server) {
             const version = await readyDetails(client, space.id, server.id);
             if (version) {
-              await services.remoteSync.linkBook({ bookId: book.id, spaceId: space.id, serverBookId: server.id, versionId: version.id });
+              await services.remoteSync.linkBook({
+                bookId: book.id, spaceId: space.id, serverBookId: server.id, versionId: version.id,
+                // exact only when the ready version IS the uploaded file (not a conversion)
+                exactCopy: version.sha256.toLowerCase() === localSha256,
+              });
             }
           }
         } else if (outcome === 'duplicate') showToast(t('library.remote.uploadDuplicate'), 'info');
@@ -617,7 +623,7 @@ export function LibraryScreen() {
         t('library.remote.conflictTitle'),
         t('library.remote.conflictBody', {
           title: conflict.remoteTitle,
-          server: Math.round(conflict.server.percent),
+          server: Math.round(conflict.server.percentage * 100),
           local: Math.round(conflict.local.fraction * 100),
         }),
         [
@@ -627,6 +633,12 @@ export function LibraryScreen() {
         ],
       );
     });
+
+  // XPointers only travel between byte-identical copies (verified link)
+  const isExactCopy = async (localId: string, versionId: string): Promise<boolean> => {
+    const link = await services.remoteSync.getLink(localId);
+    return link?.versionId === versionId && link.exactCopy === true;
+  };
 
   const resolveConflict = async (spaceId: string, installationId: string, conflict: LmConflict) => {
     const client = lmClientRef.current;
@@ -641,10 +653,11 @@ export function LibraryScreen() {
         saveProgress: (p: Parameters<typeof services.progress.saveProgress>[0]) => services.progress.saveProgress(p),
         installationId,
         newOperationId: uuidV7,
+        isExactCopy,
       };
       try {
         if (choice === 'server') {
-          await applyServerProgress(syncDeps, conflict.localId, conflict.server);
+          await applyServerProgress(syncDeps, conflict.localId, conflict.server, await isExactCopy(conflict.localId, conflict.versionId));
         } else {
           await pushLocalChoice(syncDeps, spaceId, conflict);
         }
@@ -671,6 +684,7 @@ export function LibraryScreen() {
           saveProgress: (p) => services.progress.saveProgress(p),
           installationId,
           newOperationId: uuidV7,
+          isExactCopy,
           onLink: (localId, remoteId, versionId) => {
             void services.remoteSync.linkBook({ bookId: localId, spaceId: space.id, serverBookId: remoteId, versionId });
           },

@@ -17,15 +17,16 @@ const makeRepo = async (bookIds: string[]): Promise<RemoteSyncRepo> => {
   return createRemoteSyncRepo(db);
 };
 
-const receipt = (revision: number) => ({ bookId: 'sb1', versionId: 'v1', cfi: null, chapterId: null, percent: 20, revision, updatedAt: 1700000000 });
+const XP = '/body/DocFragment[3]/body/p[2]/text().7';
+const receipt = (revision: number) => ({ bookId: 'sb1', versionId: 'v1', progress: null, percentage: 0.2, revision, updatedAtMs: 1700000000000 });
 
-type PutCall = { spaceId: string; bookId: string; op: { installationId: string; operationId: string; expectedRevision: number; versionId: string; cfi: string | null; chapterId: string | null; percent: number } };
+type PutCall = { spaceId: string; bookId: string; op: { installationId: string; operationId: string; expectedRevision: number; versionId: string; progress: string | null; percentage: number } };
 
 describe('flushProgressJournal — ordered, single-flight, offline-tolerant push', () => {
   it('sends the pending op with the stored revision, persists the receipt and the new revision', async () => {
     const repo = await makeRepo(['b1']);
     await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: 'c1', chapterId: null, percent: 20 });
+    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', progress: XP, percentage: 0.2 });
     await repo.setLastRevision('b1', 3);
 
     const calls: PutCall[] = [];
@@ -42,7 +43,7 @@ describe('flushProgressJournal — ordered, single-flight, offline-tolerant push
     };
     const summary = await flushProgressJournal(deps);
     expect(summary).toEqual({ sent: 1, remaining: 0 });
-    expect(calls[0]!.op).toMatchObject({ installationId: 'inst', operationId: 'o1', expectedRevision: 3, versionId: 'v1', cfi: 'c1', percent: 20 });
+    expect(calls[0]!.op).toMatchObject({ installationId: 'inst', operationId: 'o1', expectedRevision: 3, versionId: 'v1', progress: XP, percentage: 0.2 });
     expect(await repo.pendingOps()).toHaveLength(0);
     expect(await repo.getLastRevision('b1')).toBe(4);
   });
@@ -50,7 +51,7 @@ describe('flushProgressJournal — ordered, single-flight, offline-tolerant push
   it('a network failure stops the flush and keeps the op queued for the next attempt', async () => {
     const repo = await makeRepo(['b1']);
     await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: null, chapterId: null, percent: 10 });
+    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', progress: null, percentage: 0.1 });
     const deps = {
       client: {
         putProgress: async () => { throw new LmError('network', 'offline'); },
@@ -67,7 +68,7 @@ describe('flushProgressJournal — ordered, single-flight, offline-tolerant push
   it('a 409 retries ONCE with a fresh operationId and the server revision from the error details', async () => {
     const repo = await makeRepo(['b1']);
     await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: null, chapterId: null, percent: 42 });
+    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', progress: null, percentage: 0.42 });
     const calls: PutCall[] = [];
     const deps = {
       client: {
@@ -95,7 +96,7 @@ describe('flushProgressJournal — ordered, single-flight, offline-tolerant push
   it('a second 409 drops the op instead of looping — the next page turn re-attempts', async () => {
     const repo = await makeRepo(['b1']);
     await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: null, chapterId: null, percent: 42 });
+    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', progress: null, percentage: 0.42 });
     const conflict = new LmError('conflict', '409 revisionConflict', 'revisionConflict', { expectedRevision: 0, currentRevision: 5 });
     const deps = {
       client: {
@@ -114,8 +115,8 @@ describe('flushProgressJournal — ordered, single-flight, offline-tolerant push
     const repo = await makeRepo(['b1', 'b2']);
     await repo.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1' });
     await repo.linkBook({ bookId: 'b2', spaceId: 's1', serverBookId: 'sb2', versionId: 'v2' });
-    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', cfi: null, chapterId: null, percent: 10 });
-    await repo.enqueueOp({ bookId: 'b2', spaceId: 's1', serverBookId: 'sb2', versionId: 'v2', operationId: 'o2', cfi: null, chapterId: null, percent: 20 });
+    await repo.enqueueOp({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', operationId: 'o1', progress: null, percentage: 0.1 });
+    await repo.enqueueOp({ bookId: 'b2', spaceId: 's1', serverBookId: 'sb2', versionId: 'v2', operationId: 'o2', progress: null, percentage: 0.2 });
     const calls: PutCall[] = [];
     const deps = {
       client: {

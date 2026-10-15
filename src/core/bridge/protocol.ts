@@ -7,8 +7,9 @@ export const PROTOCOL_VERSION = 1;
 
 // resume carries the last reading position so the engine applies it INSIDE
 // view.init (foliate's lastLocation) — one navigation after the first render,
-// never racing app-issued commands
-export type ResumeTarget = { cfi?: string | null; fraction?: number } | null;
+// never racing app-issued commands. xpointer (v1.x additive) is the KOReader
+// position shared with Library Manager: used when no local cfi exists
+export type ResumeTarget = { cfi?: string | null; xpointer?: string | null; fraction?: number } | null;
 
 export type AppToEngine =
   | { type: 'openBook'; format: BookFormat; size: number; resume?: ResumeTarget }
@@ -41,7 +42,9 @@ export type EngineToApp =
   // once per open, after init and the resume navigation completed: the app
   // gates progress persistence on it (earlier relocates must not clobber)
   | { type: 'resumeApplied' }
-  | { type: 'progress'; cfi: string | null; fraction: number; sectionIndex: number | null }
+  // xpointer (v1.x additive): KOReader position of the same point, null when
+  // unavailable (non-EPUB, unresolvable) — never derived from the fraction
+  | { type: 'progress'; cfi: string | null; xpointer?: string | null; fraction: number; sectionIndex: number | null }
   | { type: 'bookmarkCaptured'; target: string; fraction: number; excerpt: string }
   | { type: 'extractResult'; requestId: string; ok: true; metadata: EngineMetadataPayload; cbzBase64: string | null }
   | { type: 'extractResult'; requestId: string; ok: false; error: string }

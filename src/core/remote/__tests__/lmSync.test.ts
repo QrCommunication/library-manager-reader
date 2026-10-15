@@ -1,11 +1,14 @@
 import {
   matchRemoteBook, syncSpaceProgress, applyServerProgress, pushLocalChoice,
-  fractionToPercent, percentToFraction, progressUpdatedAtMs,
+  progressUpdatedAtMs,
   type LmConflict, type LmSyncDeps,
 } from '../lmSync';
 import { LmError } from '../lmClient';
-import type { LmBook, LmBookDetails, LmProgress } from '../lmClient';
+import type { LmBook, LmBookDetails, LmProgress, LmProgressOp } from '../lmClient';
 import type { ReadingProgress } from '../../../core/types';
+
+const LOCAL_XP = '/body/DocFragment[2]/body/p[3]/text().12';
+const SERVER_XP = '/body/DocFragment[4]/body/div/p[7]/text().0';
 
 const remote = (over: Partial<LmBook> = {}): LmBook => ({
   id: 'r1', title: 'Dune', author: 'F. Herbert', series: null, seriesIndex: null,
@@ -22,18 +25,19 @@ const local = (over: {
 });
 
 const progress = (over: Partial<ReadingProgress> = {}): ReadingProgress => ({
-  bookId: 'b1', cfi: 'epubcfi(/6/2)', fraction: 0.25, sectionIndex: 1, updatedAt: 1700000000000, ...over,
+  bookId: 'b1', cfi: 'epubcfi(/6/2)', xpointer: LOCAL_XP, fraction: 0.25, sectionIndex: 1, updatedAt: 1700000000000, ...over,
 });
 
 const serverProgress = (over: Partial<LmProgress> = {}): LmProgress => ({
-  bookId: 'r1', versionId: 'v1', cfi: 'epubcfi(/8/4)', chapterId: 'ch-2',
-  percent: 50, revision: 3, updatedAt: 1700000000, ...over,
+  bookId: 'r1', versionId: 'v1', progress: SERVER_XP,
+  percentage: 0.5, revision: 3, updatedAtMs: 1700000000000, ...over,
 });
 
 const makeDeps = (
   locals: ReturnType<typeof local>[],
   remotes: Record<string, LmBookDetails> = {},
   serverProgressByBook: Record<string, LmProgress | null> = {},
+  exact = true,
 ) => {
   const calls: string[] = [];
   let operationSeq = 0;
@@ -47,18 +51,19 @@ const makeDeps = (
         calls.push(`get:${bookId}`);
         return serverProgressByBook[bookId] ?? null;
       },
-      putProgress: async (_spaceId: string, bookId: string, op: { expectedRevision: number; versionId: string; percent: number; operationId: string; cfi: string | null }) => {
-        calls.push(`put:${bookId}:${op.expectedRevision}:${op.percent}:${op.operationId}:${op.cfi ?? ''}`);
+      putProgress: async (_spaceId: string, bookId: string, op: LmProgressOp) => {
+        calls.push(`put:${bookId}:${op.expectedRevision}:${op.percentage}:${op.operationId}:${op.progress ?? ''}`);
         return serverProgress(bookId === 'r1' ? {} : { bookId });
       },
     },
     locals,
     getProgress: async (bookId: string) => locals.find((l) => l.id === bookId)?.progress ?? null,
     saveProgress: async (p: ReadingProgress) => {
-      calls.push(`save:${p.bookId}:${p.fraction}:${p.updatedAt}:${p.cfi ?? ''}`);
+      calls.push(`save:${p.bookId}:${p.fraction}:${p.updatedAt}:${p.cfi ?? ''}:${p.xpointer ?? ''}`);
     },
     installationId: 'inst-1',
     newOperationId: () => `op-${++operationSeq}`,
+    isExactCopy: async () => exact,
   };
   return { calls, deps };
 };
@@ -68,14 +73,11 @@ const withReadyVersion = (bookId: string, versionId = 'v1'): Record<string, LmBo
 });
 
 describe('helpers', () => {
-  it('converts between the local fraction and the wire percent', () => {
-    expect(fractionToPercent(0.125)).toBeCloseTo(12.5);
-    expect(percentToFraction(12.5)).toBeCloseTo(0.125);
-  });
-
   it('normalizes the server updatedAt whatever its unit', () => {
     expect(progressUpdatedAtMs(1700000000)).toBe(1700000000000);
     expect(progressUpdatedAtMs(1700000000123)).toBe(1700000000123);
+    expect(progressUpdatedAtMs('2023-11-14T22:13:20Z')).toBe(1700000000000);
+    expect(progressUpdatedAtMs('garbage')).toBe(0);
   });
 });
 
@@ -107,7 +109,8 @@ describe('syncSpaceProgress', () => {
     expect(summary).toMatchObject({ pulled: 0, pushed: 1, inSync: 0, none: 0, failed: 0 });
     expect(summary.conflicts).toHaveLength(0);
     expect(calls).toContain('details:r1');
-    expect(calls).toContain('put:r1:0:25:op-1:epubcfi(/6/2)');
+    // KOReader body: XPointer + fraction 0..1 — never the local cfi
+    expect(calls).toContain(`put:r1:0:0.25:op-1:${LOCAL_XP}`);
     expect(calls).toContain('get:r1');
   });
 
@@ -115,15 +118,24 @@ describe('syncSpaceProgress', () => {
     const { calls, deps } = makeDeps([local()], withReadyVersion('r1'), { r1: serverProgress() });
     const summary = await syncSpaceProgress(deps, 's1', [remote()]);
     expect(summary).toMatchObject({ pulled: 1, pushed: 0 });
-    // percent 50 → fraction 0.5; unix seconds on the wire → ms locally; cfi preserved
-    expect(calls).toContain('save:b1:0.5:1700000000000:epubcfi(/8/4)');
+    // fraction as-is; the local cfi is cleared, the server XPointer kept for the engine
+    expect(calls).toContain(`save:b1:0.5:1700000000000::${SERVER_XP}`);
+  });
+
+  it('exchanges only the percentage with a title-matched (unverified) local file', async () => {
+    const pull = makeDeps([local()], withReadyVersion('r1'), { r1: serverProgress() }, false);
+    await syncSpaceProgress(pull.deps, 's1', [remote()]);
+    expect(pull.calls).toContain('save:b1:0.5:1700000000000::');
+    const push = makeDeps([local({ progress: progress() })], withReadyVersion('r1'), { r1: null }, false);
+    await syncSpaceProgress(push.deps, 's1', [remote()]);
+    expect(push.calls).toContain('put:r1:0:0.25:op-1:');
   });
 
   it('counts a diverging position as an explicit conflict, touching nothing', async () => {
     const { calls, deps } = makeDeps(
       [local({ progress: progress({ fraction: 0.2, updatedAt: 1690000000000 }) })],
       withReadyVersion('r1'),
-      { r1: serverProgress({ percent: 80 }) },
+      { r1: serverProgress({ percentage: 0.8 }) },
     );
     const summary = await syncSpaceProgress(deps, 's1', [remote()]);
     expect(summary.pulled).toBe(0);
@@ -131,7 +143,7 @@ describe('syncSpaceProgress', () => {
     expect(summary.conflicts).toHaveLength(1);
     const conflict = summary.conflicts[0]!;
     expect(conflict).toMatchObject({ remoteId: 'r1', localId: 'b1', versionId: 'v1' });
-    expect(conflict.server.percent).toBe(80);
+    expect(conflict.server.percentage).toBe(0.8);
     expect(conflict.local.fraction).toBe(0.2);
     expect(calls).toEqual(['details:r1', 'get:r1']);
   });
@@ -140,7 +152,7 @@ describe('syncSpaceProgress', () => {
     const { calls, deps } = makeDeps(
       [local({ progress: progress({ fraction: 0.50001 }) })],
       withReadyVersion('r1'),
-      { r1: serverProgress({ percent: 50 }) },
+      { r1: serverProgress({ percentage: 0.5 }) },
     );
     const summary = await syncSpaceProgress(deps, 's1', [remote()]);
     expect(summary).toMatchObject({ inSync: 1, pulled: 0, pushed: 0 });
@@ -179,8 +191,8 @@ describe('syncSpaceProgress', () => {
           calls.push(`get:${bookId}`);
           return null;
         },
-        putProgress: async (_s: string, bookId: string, op: { expectedRevision: number; percent: number; operationId: string }) => {
-          calls.push(`put:${bookId}:${op.expectedRevision}:${op.percent}:${op.operationId}`);
+        putProgress: async (_s: string, bookId: string, op: LmProgressOp) => {
+          calls.push(`put:${bookId}:${op.expectedRevision}:${op.percentage}:${op.operationId}`);
           return serverProgress({ bookId });
         },
       },
@@ -192,7 +204,7 @@ describe('syncSpaceProgress', () => {
     };
     const summary = await syncSpaceProgress(deps, 's1', [remote({ id: 'r1', title: 'Broken' }), remote({ id: 'r2', title: 'Good' })]);
     expect(summary).toMatchObject({ pulled: 0, pushed: 1, failed: 1 });
-    expect(calls).toContain('put:r2:0:60:op-1');
+    expect(calls).toContain('put:r2:0:0.6:op-1');
   });
 });
 
@@ -202,28 +214,34 @@ describe('conflict resolution', () => {
     remoteTitle: 'Dune',
     localId: 'b1',
     versionId: 'v1',
-    server: serverProgress({ percent: 80, revision: 5 }),
+    server: serverProgress({ percentage: 0.8, revision: 5 }),
     local: progress({ fraction: 0.2, updatedAt: 1690000000000 }),
     ...over,
   });
 
-  it('applyServerProgress writes the server percent and anchor onto the local book', async () => {
+  it('applyServerProgress writes the server fraction and XPointer onto the local book', async () => {
     const { calls, deps } = makeDeps([local()]);
-    await applyServerProgress(deps, 'b1', conflict().server);
-    expect(calls).toContain('save:b1:0.8:1700000000000:epubcfi(/8/4)');
+    await applyServerProgress(deps, 'b1', conflict().server, true);
+    expect(calls).toContain(`save:b1:0.8:1700000000000::${SERVER_XP}`);
+  });
+
+  it('applyServerProgress drops the XPointer for a non-exact copy', async () => {
+    const { calls, deps } = makeDeps([local()]);
+    await applyServerProgress(deps, 'b1', conflict().server, false);
+    expect(calls).toContain('save:b1:0.8:1700000000000::');
   });
 
   it('pushLocalChoice re-reads the server revision, then sends a fresh operation', async () => {
-    const { calls, deps } = makeDeps([local()], withReadyVersion('r1'), { r1: serverProgress({ percent: 80, revision: 5 }) });
+    const { calls, deps } = makeDeps([local()], withReadyVersion('r1'), { r1: serverProgress({ percentage: 0.8, revision: 5 }) });
     await pushLocalChoice(deps, 's1', conflict());
     expect(calls).toContain('get:r1');
-    expect(calls).toContain('put:r1:5:20:op-1:epubcfi(/6/2)');
+    expect(calls).toContain(`put:r1:5:0.2:op-1:${LOCAL_XP}`);
   });
 
   it('pushLocalChoice uses revision 0 when the server progress vanished meanwhile', async () => {
     const { calls, deps } = makeDeps([local()], withReadyVersion('r1'), {});
     await pushLocalChoice(deps, 's1', conflict());
-    expect(calls).toContain('put:r1:0:20:op-1:epubcfi(/6/2)');
+    expect(calls).toContain(`put:r1:0:0.2:op-1:${LOCAL_XP}`);
   });
 
   it('pushLocalChoice lets a raced 409 propagate: the UI re-presents the choice', async () => {
