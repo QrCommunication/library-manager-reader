@@ -81,31 +81,59 @@ export function formatXPointer(p: XPointerParts): string {
   return out;
 }
 
-/** UTF-16 offset → Unicode code point count (KOReader counts UTF-32) */
-export function utf16ToCodePoints(text: string, utf16Offset: number): number {
-  const end = Math.max(0, Math.min(utf16Offset, text.length));
-  let count = 0;
-  for (let i = 0; i < end; i++) {
-    const c = text.charCodeAt(i);
-    // a high surrogate followed by its low half is one code point
-    if (c >= 0xd800 && c <= 0xdbff && i + 1 < end) {
-      const n = text.charCodeAt(i + 1);
-      if (n >= 0xdc00 && n <= 0xdfff) i++;
+// CREngine stores each text node pre-processed (lvxml.cpp PreProcessXmlString):
+// outside white-space:pre, \r \n \t become spaces and a run of spaces keeps
+// only its first one; inside <pre>, \r\n / lone \r become \n and a newline
+// right after the <pre> start tag is stripped. KOReader offsets count code
+// points of THAT text — not of the raw DOM string.
+export interface CrTextMode { pre: boolean; stripLeadingNewline: boolean }
+
+const isXmlSpace = (c: number): boolean => c === 0x20 || c === 0x0d || c === 0x0a || c === 0x09;
+
+/** per raw UTF-16 unit index: does it emit a CREngine code point? (low surrogates: false) */
+function crEmitMap(raw: string, mode: CrTextMode): boolean[] {
+  const emits = new Array<boolean>(raw.length).fill(false);
+  let prevSpace = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw.charCodeAt(i);
+    if (c >= 0xdc00 && c <= 0xdfff && i > 0) {
+      const h = raw.charCodeAt(i - 1);
+      if (h >= 0xd800 && h <= 0xdbff) continue; // second half of a pair
     }
-    count++;
+    if (mode.pre) {
+      emits[i] = !((i === 0 && mode.stripLeadingNewline && c === 0x0a) || (c === 0x0d && raw.charCodeAt(i + 1) === 0x0a));
+    } else if (isXmlSpace(c)) {
+      emits[i] = !prevSpace;
+      prevSpace = true;
+    } else {
+      emits[i] = true;
+      prevSpace = false;
+    }
   }
-  return count;
+  return emits;
 }
 
-/** code point count → UTF-16 offset, clamped to the text length */
-export function codePointsToUtf16(text: string, codePoints: number): number {
-  let i = 0;
-  let count = 0;
-  while (i < text.length && count < codePoints) {
-    const c = text.charCodeAt(i);
-    i += c >= 0xd800 && c <= 0xdbff && i + 1 < text.length
-      && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff ? 2 : 1;
-    count++;
+/** raw UTF-16 offset in the DOM text → KOReader code point offset */
+export function crOffsetFromRaw(raw: string, utf16Offset: number, mode: CrTextMode): number {
+  const end = Math.max(0, Math.min(utf16Offset, raw.length));
+  const emits = crEmitMap(raw, mode);
+  let n = 0;
+  for (let i = 0; i < end; i++) if (emits[i]) n++;
+  return n;
+}
+
+/**
+ * KOReader code point offset → raw UTF-16 offset in the DOM text: the raw
+ * unit that produced that code point (collapsed spaces resolve to the first
+ * one of their run), clamped to the text end.
+ */
+export function rawOffsetFromCr(raw: string, crOffset: number, mode: CrTextMode): number {
+  const emits = crEmitMap(raw, mode);
+  let n = 0;
+  for (let i = 0; i < raw.length; i++) {
+    if (!emits[i]) continue;
+    if (n === crOffset) return i;
+    n++;
   }
-  return i;
+  return raw.length;
 }

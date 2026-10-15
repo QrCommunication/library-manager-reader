@@ -1,5 +1,6 @@
 import {
-  codePointsToUtf16, formatXPointer, isXPointer, parseXPointer, utf16ToCodePoints, xpointerOrNull,
+  crOffsetFromRaw, rawOffsetFromCr,
+  formatXPointer, isXPointer, parseXPointer, xpointerOrNull,
 } from '../xpointer';
 
 describe('KOReader XPointer (pure)', () => {
@@ -54,13 +55,27 @@ describe('KOReader XPointer (pure)', () => {
   });
 
   it('counts code points (UTF-32), not UTF-16 units', () => {
+    const normal = { pre: false, stripLeadingNewline: false };
     const s = 'a😀b';
     expect(s.length).toBe(4);
-    expect(utf16ToCodePoints(s, 3)).toBe(2);
-    expect(utf16ToCodePoints(s, 4)).toBe(3);
-    expect(codePointsToUtf16(s, 2)).toBe(3);
-    expect(codePointsToUtf16(s, 99)).toBe(4);
-    // an offset splitting a surrogate pair counts the dangling half once
-    expect(utf16ToCodePoints(s, 2)).toBe(2);
+    expect(crOffsetFromRaw(s, 3, normal)).toBe(2);
+    expect(rawOffsetFromCr(s, 2, normal)).toBe(3);
+  });
+
+  it('maps raw offsets onto CREngine-processed text and back', () => {
+    const normal = { pre: false, stripLeadingNewline: false };
+    const raw = 'a \n\t b😀c';
+    // processed: "a b😀c"
+    expect(crOffsetFromRaw(raw, raw.indexOf('b'), normal)).toBe(2);
+    expect(crOffsetFromRaw(raw, raw.indexOf('c'), normal)).toBe(4);
+    expect(rawOffsetFromCr(raw, 2, normal)).toBe(raw.indexOf('b'));
+    expect(rawOffsetFromCr(raw, 4, normal)).toBe(raw.indexOf('c'));
+    // a collapsed space resolves to the first space of its run
+    expect(rawOffsetFromCr(raw, 1, normal)).toBe(1);
+    expect(rawOffsetFromCr(raw, 99, normal)).toBe(raw.length);
+    const pre = { pre: true, stripLeadingNewline: true };
+    expect(crOffsetFromRaw('\nx\r\ny', 4, pre)).toBe(2);
+    expect(rawOffsetFromCr('\nx\r\ny', 2, pre)).toBe(4);
   });
 });
+

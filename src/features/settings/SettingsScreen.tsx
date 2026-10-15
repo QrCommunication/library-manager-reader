@@ -15,13 +15,13 @@ import { buildExportEntries, zipEntries } from '../../core/library/exportService
 import { saveBytesToUserDir, EXPORT_MIME } from '../../core/storage/saf';
 import { createKoSyncClient, KoSyncError } from '../../core/progress/koreaderSync';
 import { isKoSyncConfigured, koSyncClientFromPrefs, KO_SYNC_DEVICE } from '../../core/progress/koSyncAccount';
-import { syncLibraryProgress } from '../../core/progress/koreaderSyncService';
+import { resolveKoSyncConflict, syncLibraryProgress, type KoSyncConflict } from '../../core/progress/koreaderSyncService';
 import { LmError } from '../../core/remote/lmClient';
 import { lmBeginSignIn, lmCompleteSignIn, lmDisconnect, lmIsConnected } from '../../core/remote/lmAccount';
 import { createLmAccountDeps } from '../../core/storage/expoSecureStore';
 import { LmAuthSheet } from './LmAuthSheet';
 import { uuidV7 } from '../../core/uuid';
-import { inform } from '../../ui/dialogs';
+import { inform, alert as dialogAlert } from '../../ui/dialogs';
 import { showToast } from '../../ui/toast';
 import { useUiPrefsStore } from './uiPrefsStore';
 import { useReaderSettingsStore } from './readerSettingsStore';
@@ -142,6 +142,29 @@ export function SettingsScreen() {
     }
   };
 
+  // KOReader-style explicit choice: both positions, the other device and dates
+  const askKoConflict = (title: string, c: KoSyncConflict): Promise<'server' | 'local' | null> =>
+    new Promise((resolve) => {
+      const date = (ms: number) =>
+        (ms > 0 ? new Date(ms).toLocaleString(i18n.language || undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+      dialogAlert(
+        t('settings.koreader.conflictTitle'),
+        t('settings.koreader.conflictBody', {
+          title,
+          server: Math.round(c.server * 100),
+          serverDevice: c.serverDevice ?? '—',
+          serverDate: date((c.serverTimestamp ?? 0) * 1000),
+          local: Math.round(c.local * 100),
+          localDate: date(c.localUpdatedAt),
+        }),
+        [
+          { text: t('library.remote.conflictServer'), onPress: () => resolve('server') },
+          { text: t('library.remote.conflictLocal'), onPress: () => resolve('local') },
+          { text: t('library.remote.conflictLater'), style: 'cancel', onPress: () => resolve(null) },
+        ],
+      );
+    });
+
   const koSyncLibrary = async () => {
     if (!koConnected) {
       void inform(t('settings.koreader.title'), t('settings.koreader.needAccount'));
@@ -151,22 +174,36 @@ export function SettingsScreen() {
     try {
       const client = await koSyncClientFromPrefs(services.settings);
       const all = await services.books.listBooks({ sort: 'added' });
+      const syncDeps = {
+        readAt: (path: string, offset: number, length: number) => services.fs.readRange(path, offset, length),
+        getProgress: (id: string) => services.progress.getProgress(id),
+        saveProgress: (p: Parameters<typeof services.progress.saveProgress>[0]) => services.progress.saveProgress(p),
+        client,
+      };
       const summary = await syncLibraryProgress(
-        {
-          readAt: (path, offset, length) => services.fs.readRange(path, offset, length),
-          getProgress: (id) => services.progress.getProgress(id),
-          saveProgress: (p) => services.progress.saveProgress(p),
-          client,
-        },
+        syncDeps,
         all.map((b) => ({ id: b.id, filePath: services.paths.bookPath(b.id, b.format) })),
       );
+      // explicit choice per diverging book (no newest-wins on device clocks)
+      let resolved = 0;
+      for (const c of summary.conflicts) {
+        const choice = await askKoConflict(all.find((b) => b.id === c.bookId)?.title ?? '', c);
+        if (!choice) continue;
+        try {
+          await resolveKoSyncConflict(syncDeps, c, choice);
+          resolved++;
+        } catch (err) {
+          console.warn('[settings] kosync conflict resolution failed', err);
+        }
+      }
       void inform(
         t('settings.koreader.syncTitle'),
         t('settings.koreader.syncSummary', {
           pushed: summary.pushed,
           pulled: summary.pulled,
           inSync: summary.inSync,
-          conflicts: summary.conflicts,
+          conflicts: resolved,
+          pending: summary.conflicts.length - resolved,
           failed: summary.failed,
         }),
       );

@@ -129,6 +129,9 @@ export class ReaderBridge {
     this.emit({ type: 'goTo', target });
   }
   goToFraction(fraction: number): void { this.emit({ type: 'goToFraction', fraction }); }
+  goToPosition(position: { xpointer: string | null; fraction: number }): void {
+    this.emit({ type: 'goToPosition', xpointer: position.xpointer, fraction: position.fraction });
+  }
   next(): void { this.emit({ type: 'next' }); }
   prev(): void { this.emit({ type: 'prev' }); }
   applySettings(settings: ReaderSettings): void { this.emit({ type: 'applySettings', settings }); }

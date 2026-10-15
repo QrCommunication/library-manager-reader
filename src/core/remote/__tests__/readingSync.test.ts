@@ -4,13 +4,15 @@ import { migrate } from '../../../db/migrate';
 import { createBooksRepo } from '../../../db/booksRepo';
 import { createProgressRepo } from '../../../db/progressRepo';
 import { createSettingsRepo } from '../../../db/settingsRepo';
-import { createRemoteSyncRepo, type RemoteSyncRepo } from '../../../db/remoteSyncRepo';
+import { createRemoteSyncRepo } from '../../../db/remoteSyncRepo';
 import { LM_TOKEN_KEYS } from '../lmTokens';
 import type { LmClient, LmProgressOp } from '../lmClient';
 
-const XP = '/body/DocFragment[2]/body/p[3]/text().42';
-import { pullReadingPosition, pushReadingPosition } from '../readingSync';
+import { pushReadingPosition, reconcileReadingPosition, resolveReadingConflict } from '../readingSync';
+import { fakeLmServer } from './fakeLmServer';
 import { DEFAULT_UI_PREFS, type UiPrefs } from '../../types';
+
+const XP = '/body/DocFragment[2]/body/p[3]/text().42';
 
 jest.mock('expo-crypto', () => ({
   __esModule: true,
@@ -30,7 +32,7 @@ const makeEnv = async () => {
   const progress = createProgressRepo(db);
   const settings = createSettingsRepo(db);
   const remoteSync = createRemoteSyncRepo(db);
-  const services = { books, progress, settings, remoteSync } as unknown as Parameters<typeof pullReadingPosition>[0];
+  const services = { books, progress, settings, remoteSync } as unknown as Parameters<typeof pushReadingPosition>[0];
   return { services: services as never, progress, remoteSync, settings };
 };
 
@@ -83,28 +85,40 @@ describe('readingSync — live page-turn glue', () => {
     spy.mockRestore();
   });
 
-  it('pull: server strictly newer → local progress replaced; local newer → untouched', async () => {
-    const { services, progress, remoteSync } = await makeEnv();
-    await remoteSync.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', exactCopy: true });
-    await seedTokens();
+  it('reconcile: unlinked or signed out → none, no network', async () => {
+    const { services } = await makeEnv();
     const spy = jest.spyOn(require('../lmAccount'), 'lmClientFromAccount');
+    expect(await reconcileReadingPosition(services, 'b1')).toEqual({ kind: 'none' });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
 
-    // server newer than the (absent) local progress → applied
-    let client = {
-      getProgress: async () => ({ bookId: 'sb1', versionId: 'v1', progress: XP, percentage: 0.7, revision: 2, updatedAtMs: 1700000000000 }),
-    } as unknown as Pick<LmClient, 'getProgress'>;
-    spy.mockImplementation(async () => client as LmClient);
-    await pullReadingPosition(services, 'b1');
-    // the engine resolves the XPointer on open: no stale local cfi survives
+  it('reconcile at open: another device moved, this one did not → fast-forward (XPointer kept)', async () => {
+    const { services, progress, remoteSync, settings } = await makeEnv();
+    await remoteSync.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', exactCopy: true });
+    await settings.putUiPrefs({ ...DEFAULT_UI_PREFS, lmUsername: 'me', lmInstallationId: 'inst-1' });
+    await seedTokens();
+    const server = fakeLmServer();
+    server.otherDeviceWrites('sb1', 0.7, XP);
+    const spy = jest.spyOn(require('../lmAccount'), 'lmClientFromAccount').mockImplementation(async () => server.client as unknown as LmClient);
+    expect(await reconcileReadingPosition(services, 'b1')).toMatchObject({ kind: 'pulled' });
     expect(await progress.getProgress('b1')).toMatchObject({ fraction: 0.7, cfi: null, xpointer: XP });
+    spy.mockRestore();
+  });
 
-    // local newer → untouched
-    client = {
-      getProgress: async () => ({ bookId: 'sb1', versionId: 'v1', progress: null, percentage: 0.1, revision: 3, updatedAtMs: 1600000000000 }),
-    } as unknown as Pick<LmClient, 'getProgress'>;
-    spy.mockImplementation(async () => client as LmClient);
-    await pullReadingPosition(services, 'b1');
-    expect(await progress.getProgress('b1')).toMatchObject({ fraction: 0.7 });
+  it('reconcile: both moved → conflict; resolving with the local side writes a new op on the re-read revision', async () => {
+    const { services, progress, remoteSync, settings } = await makeEnv();
+    await remoteSync.linkBook({ bookId: 'b1', spaceId: 's1', serverBookId: 'sb1', versionId: 'v1', exactCopy: true });
+    await settings.putUiPrefs({ ...DEFAULT_UI_PREFS, lmUsername: 'me', lmInstallationId: 'inst-1' });
+    await seedTokens();
+    const server = fakeLmServer();
+    const spy = jest.spyOn(require('../lmAccount'), 'lmClientFromAccount').mockImplementation(async () => server.client as unknown as LmClient);
+    await progress.saveProgress({ bookId: 'b1', cfi: 'c', xpointer: XP, fraction: 0.2, sectionIndex: null, updatedAt: Date.now() });
+    server.otherDeviceWrites('sb1', 0.9);
+    expect(await reconcileReadingPosition(services, 'b1')).toEqual({ kind: 'conflict' });
+    expect(server.state.get('sb1')).toMatchObject({ percentage: 0.9 });
+    await resolveReadingConflict(services, 'b1', 'local');
+    expect(server.state.get('sb1')).toMatchObject({ percentage: 0.2, progress: XP, revision: 2 });
     spy.mockRestore();
   });
 

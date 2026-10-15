@@ -19,6 +19,8 @@ export class LmError extends Error {
     message?: string,
     public code?: string,
     public details?: unknown,
+    /** HTTP status when the error came from a response */
+    public status?: number,
   ) {
     super(message ?? kind);
     this.name = 'LmError';
@@ -230,13 +232,13 @@ export class LmClient {
     }
     if (res.ok) return res;
     if (opts.passThrough?.includes(res.status)) return res;
-    if (res.status === 401) throw new LmError('auth');
+    if (res.status === 401) throw new LmError('auth', undefined, undefined, undefined, 401);
     let body: BusinessErrorBody = {};
     try { body = (await res.json()) as BusinessErrorBody; } catch { /* non-JSON error body */ }
-    if (res.status === 403) throw new LmError('forbidden', `403 ${body.error?.code ?? ''}`.trim(), body.error?.code);
-    if (res.status === 409) throw new LmError('conflict', `409 ${body.error?.code ?? ''}`.trim(), body.error?.code, body.error?.details);
-    if (res.status === 429) throw new LmError('rate', `429 ${body.error?.code ?? ''}`.trim(), body.error?.code);
-    throw new LmError('server', `${init.method ?? 'GET'} ${path} → ${res.status}`, body.error?.code);
+    if (res.status === 403) throw new LmError('forbidden', `403 ${body.error?.code ?? ''}`.trim(), body.error?.code, undefined, 403);
+    if (res.status === 409) throw new LmError('conflict', `409 ${body.error?.code ?? ''}`.trim(), body.error?.code, body.error?.details, 409);
+    if (res.status === 429) throw new LmError('rate', `429 ${body.error?.code ?? ''}`.trim(), body.error?.code, undefined, 429);
+    throw new LmError('server', `${init.method ?? 'GET'} ${path} → ${res.status}`, body.error?.code, undefined, res.status);
   }
 
   me(): Promise<LmMe> {

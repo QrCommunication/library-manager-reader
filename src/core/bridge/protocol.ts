@@ -17,6 +17,9 @@ export type AppToEngine =
   | { type: 'dataEnd' }
   | { type: 'goTo'; target: string }
   | { type: 'goToFraction'; fraction: number }
+  // v1.x additive: a synced position — the XPointer (resolved on the source
+  // XHTML) when usable, else the fraction
+  | { type: 'goToPosition'; xpointer: string | null; fraction: number }
   | { type: 'next' }
   | { type: 'prev' }
   | { type: 'applySettings'; settings: ReaderSettings }
@@ -67,6 +70,6 @@ export const ENGINE_TO_APP_TYPES: readonly EngineToApp['type'][] = [
 ];
 
 export const APP_TO_ENGINE_TYPES: readonly AppToEngine['type'][] = [
-  'openBook', 'data', 'dataEnd', 'goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'captureBookmark', 'extract',
+  'openBook', 'data', 'dataEnd', 'goTo', 'goToFraction', 'goToPosition', 'next', 'prev', 'applySettings', 'captureBookmark', 'extract',
   'addHighlight', 'removeHighlight', 'copySelection', 'search', 'searchCancel', 'ttsStart', 'ttsStop', 'ttsNext',
 ];

@@ -8,6 +8,7 @@ import * as ExpoSpeech from 'expo-speech';
 import { useServices } from '../../core/services';
 import { createExpoSpeechService } from '../../core/speech/speechService';
 import { useReaderSession } from './useReaderSession';
+import { useReadingSync } from './useReadingSync';
 import { EngineWebView } from './EngineWebView';
 import { ProgressSlider } from './ProgressSlider';
 import { TocPanel } from './TocPanel';
@@ -38,6 +39,8 @@ export function ReaderScreen({ bookId }: { bookId: string }) {
   const router = useRouter();
   const { settings, update } = useReaderSettingsStore();
   const { state, errorKind, title, language, fraction, toc, bridge, retry } = useReaderSession(bookId);
+  // Library Manager: explicit conflicts + re-read on return to the foreground
+  useReadingSync(services, bookId, bridge, state === 'ready', title);
   const scheme = useColorScheme();
   // react-native reports 'unspecified' when the scheme is undetermined:
   // normalize to null so resolveTheme keeps its light/dark/null signature

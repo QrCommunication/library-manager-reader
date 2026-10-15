@@ -77,4 +77,38 @@ describe('engine XPointer ↔ DOM', () => {
     const div = d.querySelector('div')!;
     expect(boundaryToXPointer(d, 0, 2, div, 0)).toBe('/body/DocFragment[1]/body/div');
   });
+
+  it('counts offsets in CREngine-processed text (collapsed whitespace), not raw DOM units', () => {
+    const d = xhtml('<p>Il était\n      une   fois</p>');
+    const t = d.querySelector('p')!.firstChild as Text;
+    const raw = t.data.indexOf('fois');
+    // CREngine text: "Il était une fois" → "fois" starts at code point 13
+    const xp = boundaryToXPointer(d, 0, 1, t, raw);
+    expect(xp).toBe('/body/DocFragment/body/p/text().13');
+    expect(roundTrip(d, xp!)).toEqual({ node: t, offset: raw });
+  });
+
+  it('keeps <pre> whitespace verbatim but strips the newline after the start tag', () => {
+    const d = xhtml('<pre>\na  b\n c</pre>');
+    const t = d.querySelector('pre')!.firstChild as Text;
+    const xp = boundaryToXPointer(d, 0, 1, t, t.data.indexOf('c'));
+    // CREngine text "a  b\n c": c is code point 6
+    expect(xp).toBe('/body/DocFragment/body/pre/text().6');
+    expect(roundTrip(d, xp!)).toEqual({ node: t, offset: t.data.indexOf('c') });
+  });
+
+  it('indexes whitespace text between inline elements (kept by CREngine)', () => {
+    const d = xhtml('<p><b>un</b> <i>deux</i> trois</p>');
+    const p = d.querySelector('p')!;
+    const last = p.lastChild as Text; // " trois"
+    expect(boundaryToXPointer(d, 0, 1, last, 1)).toBe('/body/DocFragment/body/p/text()[2].1');
+  });
+
+  it('drops whitespace-only text bordering blocks inside a mixed container', () => {
+    const d = xhtml('<div>\n  <p>a</p>\n  texte libre\n  <p>b</p>\n</div>');
+    const div = d.querySelector('div')!;
+    const free = Array.from(div.childNodes).find((n) => n.nodeType === 3 && /texte/.test((n as Text).data)) as Text;
+    expect(boundaryToXPointer(d, 0, 1, free, free.data.indexOf('texte'))).toBe('/body/DocFragment/body/div/text().1');
+  });
 });
+

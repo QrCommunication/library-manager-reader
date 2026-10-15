@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Appearance } from 'react-native';
 import { useServices, type AppServices } from '../../core/services';
 import { ReaderBridge, type SearchResultPayload, type SelectionPayload, type TtsSentencePayload } from '../../core/reader/bridge';
-import { pullReadingPosition, pushReadingPosition } from '../../core/remote/readingSync';
+import { pushReadingPosition, reconcileReadingPosition } from '../../core/remote/readingSync';
 import { createBase64BookTransport } from '../../core/reader/bookTransport';
 import { useReaderSettingsStore } from '../settings/readerSettingsStore';
 import { resolveTheme } from '../../core/types';
@@ -12,6 +12,7 @@ export interface BridgeLike {
   openBook(a: { format: BookFormat; path: string; size: number; resume?: { cfi?: string | null; xpointer?: string | null; fraction?: number } | null }): Promise<{ toc: TocItem[]; metadata: unknown }>;
   goTo(t: string): void;
   goToFraction(f: number): void;
+  goToPosition(p: { xpointer: string | null; fraction: number }): void;
   next(): void;
   prev(): void;
   applySettings(s: ReaderSettings): void;
@@ -52,9 +53,10 @@ export function createDefaultDeps(bookId: string, services: AppServices): Reader
       return b ? { title: b.title, format: b.format, fileName: b.fileName, fileSize: b.fileSize } : null;
     },
     getProgress: async (id) => {
-      // cloud pull rides the session's own progress read: if the server holds a
-      // strictly newer position for this linked book, the open lands there
-      await pullReadingPosition(services, id);
+      // cloud reconciliation rides the session's own progress read (spec §8:
+      // re-read at open): a fast-forward lands the open on the server
+      // position; a conflict keeps the local one and is asked once ready
+      await reconcileReadingPosition(services, id);
       const p = await services.progress.getProgress(id);
       return p ? { cfi: p.cfi, xpointer: p.xpointer ?? null, fraction: p.fraction } : null;
     },

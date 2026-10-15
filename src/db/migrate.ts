@@ -1,6 +1,6 @@
 import type { DbDriver } from './driver';
 
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 6;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -109,6 +109,22 @@ const MIGRATIONS: Record<number, string> = {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX idx_progress_journal_book ON progress_journal(book_id, created_at);
+  `,
+  // Exact replay + explicit conflicts (mobile API §8):
+  //  - expected_revision / attempted_at freeze the whole body at its first
+  //    send, so a lost response is recovered by re-sending the SAME operation
+  //    (never coalesced away, never re-revisioned);
+  //  - state 'conflict' parks a 409 (or a replay window overrun) until the
+  //    user explicitly picks a side; the book's later ops wait behind it;
+  //  - synced_at (local clock, compared only with local timestamps) tells
+  //    whether the local position changed since the last agreement with the
+  //    server — the server revision, not a phone clock, decides the rest.
+  6: `
+    ALTER TABLE progress_journal ADD COLUMN expected_revision INTEGER;
+    ALTER TABLE progress_journal ADD COLUMN attempted_at INTEGER;
+    ALTER TABLE progress_journal ADD COLUMN state TEXT NOT NULL DEFAULT 'pending';
+    ALTER TABLE progress_journal ADD COLUMN conflict_revision INTEGER;
+    ALTER TABLE remote_books ADD COLUMN synced_at INTEGER NOT NULL DEFAULT 0;
   `,
 };
 

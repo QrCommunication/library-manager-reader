@@ -185,7 +185,7 @@ describe('migrate', () => {
       ['bk1', 's1', 'sb1', 'v1', 'op-legacy', 'epubcfi(/6/4)', null, 42, t],
     );
 
-    await migrate(db);
+    await migrate(db, 5);
 
     expect((await db.get<{ user_version: number }>('PRAGMA user_version'))?.user_version).toBe(5);
     // the local position survives; it has no XPointer yet
@@ -199,6 +199,24 @@ describe('migrate', () => {
     const cols = (await db.all<{ name: string }>('PRAGMA table_info(progress_journal)')).map((c) => c.name);
     expect(cols).toEqual(expect.arrayContaining(['progress', 'percentage']));
     expect(cols).not.toEqual(expect.arrayContaining(['cfi']));
+  });
+
+  it('upgrades v5 → v6: journal gains exact-replay/conflict columns, links keep their baseline', async () => {
+    const db = makeDb();
+    await migrate(db, 5);
+    const t = 1700000000000;
+    await db.run('INSERT INTO books (id,title,format,file_name,file_size,added_at,updated_at) VALUES (?,?,?,?,?,?,?)', ['bk1', 'Dune', 'epub', 'd.epub', 1, t, t]);
+    await db.run('INSERT INTO remote_books (book_id,space_id,server_book_id,version_id,last_revision,updated_at) VALUES (?,?,?,?,?,?)', ['bk1', 's1', 'sb1', 'v1', 4, t]);
+    await db.run(
+      'INSERT INTO progress_journal (book_id,space_id,server_book_id,version_id,operation_id,progress,percentage,created_at) VALUES (?,?,?,?,?,?,?,?)',
+      ['bk1', 's1', 'sb1', 'v1', 'op-1', null, 0.5, t],
+    );
+    await migrate(db);
+    expect((await db.get<{ user_version: number }>('PRAGMA user_version'))?.user_version).toBe(6);
+    // a v5 op was never frozen: it stays pending and is sent with the stored baseline
+    await expect(db.get('SELECT operation_id, state, expected_revision, attempted_at FROM progress_journal'))
+      .resolves.toEqual({ operation_id: 'op-1', state: 'pending', expected_revision: null, attempted_at: null });
+    await expect(db.get('SELECT last_revision, synced_at FROM remote_books')).resolves.toEqual({ last_revision: 4, synced_at: 0 });
   });
 
   it('enables foreign keys with cascade delete', async () => {

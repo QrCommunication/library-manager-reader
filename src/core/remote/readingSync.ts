@@ -1,47 +1,48 @@
-// Live reading sync glue: pull the server position when a linked book opens
-// (server strictly newer wins), and push the local position into the journal
-// after every page-turn save (spec §8). Positions travel in the KOReader
-// format: progress = XPointer (exact copies only), percentage = fraction 0..1.
-// Everything here is best-effort and silent — reading must never wait on the
-// network.
+// Live reading sync glue (mobile API §8), bound to the app services:
+//  - reconcileReadingPosition: at open and on return to the foreground —
+//    replays the journal, re-reads the server and applies the revision-based
+//    decision (fast-forward, push, or an explicit conflict);
+//  - pushReadingPosition: after each (debounced) page-turn save — journal the
+//    KOReader body, then flush in order;
+//  - describe/resolve: the explicit conflict choice.
+// Reading never waits on the network: failures keep the local position and
+// the durable journal.
 
 import type { AppServices } from '../services';
 import { createLmAccountDeps } from '../storage/expoSecureStore';
 import { lmClientFromAccount, lmInstallationId, lmIsConnected, type LmAccountDeps } from './lmAccount';
 import { flushProgressJournal } from './liveSync';
+import {
+  describeConflict, reconcileBook, resolveConflict,
+  type ConflictView, type ReconcileDeps, type ReconcileOutcome,
+} from './progressReconcile';
 import { uuidV7 } from '../uuid';
+import type { ReadingProgress } from '../types';
 
 /** cloud account helpers bound to the app's settings repo (cheap to build) */
 export const accountDeps = (services: AppServices): LmAccountDeps => createLmAccountDeps(services.settings);
 
-/**
- * Server position for a linked book, applied locally when strictly newer.
- * Called when a book opens, before the reader settles on the local position —
- * best-effort: any failure keeps the local position untouched.
- */
-export async function pullReadingPosition(services: AppServices, bookId: string): Promise<void> {
+/** reconcile deps for a connected account, else null (signed out) */
+export async function reconcileDeps(services: AppServices): Promise<ReconcileDeps | null> {
+  const account = accountDeps(services);
+  if (!(await lmIsConnected(account))) return null;
+  return {
+    client: await lmClientFromAccount(account),
+    repo: services.remoteSync,
+    progress: services.progress,
+    installationId: await lmInstallationId(account),
+    newOperationId: uuidV7,
+  };
+}
+
+/** best-effort: offline / signed out / unlinked → { kind: 'none' } */
+export async function reconcileReadingPosition(services: AppServices, bookId: string): Promise<ReconcileOutcome> {
   try {
-    const link = await services.remoteSync.getLink(bookId);
-    if (!link) return;
-    const account = accountDeps(services);
-    if (!(await lmIsConnected(account))) return;
-    const client = await lmClientFromAccount(account);
-    const server = await client.getProgress(link.spaceId, link.serverBookId, link.versionId);
-    if (!server) return;
-    const local = await services.progress.getProgress(bookId);
-    // newest wins: the reader is not open long enough for a real conflict here
-    if (local && local.updatedAt >= server.updatedAtMs) return;
-    await services.progress.saveProgress({
-      bookId,
-      // the engine resolves the XPointer on these exact bytes (else the fraction)
-      cfi: null,
-      xpointer: link.exactCopy ? server.progress : null,
-      fraction: server.percentage,
-      sectionIndex: null,
-      updatedAt: server.updatedAtMs || Date.now(),
-    });
+    if (!(await services.remoteSync.getLink(bookId))) return { kind: 'none' };
+    const deps = await reconcileDeps(services);
+    return deps ? await reconcileBook(deps, bookId) : { kind: 'none' };
   } catch {
-    // offline/expired/no rights: local position stays
+    return { kind: 'none' };
   }
 }
 
@@ -58,9 +59,8 @@ export async function pushReadingPosition(
   try {
     const link = await services.remoteSync.getLink(bookId);
     if (!link) return;
-    const account = accountDeps(services);
-    if (!(await lmIsConnected(account))) return;
-    const client = await lmClientFromAccount(account);
+    const deps = await reconcileDeps(services);
+    if (!deps) return;
     await services.remoteSync.enqueueOp({
       bookId,
       spaceId: link.spaceId,
@@ -71,13 +71,28 @@ export async function pushReadingPosition(
       progress: link.exactCopy ? position.xpointer : null,
       percentage: Math.min(1, Math.max(0, position.fraction)),
     });
-    await flushProgressJournal({
-      client,
-      repo: services.remoteSync,
-      installationId: await lmInstallationId(account),
-      newOperationId: uuidV7,
-    });
+    await flushProgressJournal({ client: deps.client, repo: deps.repo, installationId: deps.installationId });
   } catch (err) {
     console.warn('[reading-sync] push failed (kept in journal)', err);
   }
+}
+
+export async function hasReadingConflict(services: AppServices, bookId: string): Promise<boolean> {
+  return (await services.remoteSync.opsForBook(bookId)).some((o) => o.state === 'conflict');
+}
+
+export async function describeReadingConflict(services: AppServices, bookId: string): Promise<ConflictView | null> {
+  const deps = await reconcileDeps(services);
+  return deps ? describeConflict(deps, bookId) : null;
+}
+
+/** explicit user choice; returns the position now applied locally ('server') */
+export async function resolveReadingConflict(
+  services: AppServices,
+  bookId: string,
+  choice: 'server' | 'local',
+): Promise<ReadingProgress | null> {
+  const deps = await reconcileDeps(services);
+  if (!deps) return null;
+  return resolveConflict(deps, bookId, choice);
 }

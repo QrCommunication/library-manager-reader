@@ -632,6 +632,12 @@ async function handle(msg: AppToEngine): Promise<void> {
     case 'dataEnd': break;
     case 'goTo': await view.goTo(msg.target); break;
     case 'goToFraction': await view.goToFraction(msg.fraction); break;
+    case 'goToPosition': {
+      const cfi = msg.xpointer ? await cfiFromXPointer(msg.xpointer) : null;
+      if (cfi) await view.goTo(cfi);
+      else await view.goToFraction(msg.fraction);
+      break;
+    }
     case 'next': view.renderer.next(); break;
     case 'prev': view.renderer.prev(); break;
     case 'applySettings': {
@@ -739,7 +745,7 @@ async function handle(msg: AppToEngine): Promise<void> {
 // throws is a genuine failure (size/protocol mismatch, null assembler…) and
 // must reach the app as an engineError instead of being swallowed into an
 // invisible hang.
-const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'next', 'prev', 'applySettings', 'copySelection', 'addHighlight', 'removeHighlight', 'search', 'searchCancel', 'ttsStart', 'ttsNext']);
+const QUIET_UNTIL_LOADED = new Set<AppToEngine['type']>(['goTo', 'goToFraction', 'goToPosition', 'next', 'prev', 'applySettings', 'copySelection', 'addHighlight', 'removeHighlight', 'search', 'searchCancel', 'ttsStart', 'ttsNext']);
 
 // Strict FIFO: every message runs through a promise chain so navigation can
 // NEVER interleave with an in-flight open/init (the resume regression: the app
