@@ -10,7 +10,9 @@ import type { ReaderBridge } from '../../core/reader/bridge';
 // reading loses the page (see engine.ts applySettings), so the inset must not
 // be applied as a live style update.
 export function EngineWebView({ bridge, onFatal, onReload, topInset = 0 }: { bridge: ReaderBridge; onFatal(): void; onReload(): void; topInset?: number }) {
-  const ref = useRef<WebView>(null);
+  // react-native-webview 14 types the class as WebView<P = undefined>, so the
+  // default instantiation resolves its props to never: pin P to object.
+  const ref = useRef<WebView<object>>(null);
   const reloads = useRef(0);
 
   useEffect(() => {
@@ -28,7 +30,7 @@ export function EngineWebView({ bridge, onFatal, onReload, topInset = 0 }: { bri
 
   return (
     <View testID="engine-root" style={[StyleSheet.absoluteFill, { top: topInset }]}>
-      <WebView
+      <WebView<object>
         ref={ref}
         // baseUrl gives the engine document a real origin: from about:blank
         // (opaque origin) foliate's section blob: iframes crash WebView 154+

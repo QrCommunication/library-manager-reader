@@ -975,7 +975,7 @@ export function LibraryScreen() {
                   style={styles.sheetScroll}
                   ListEmptyComponent={!lmBusy ? (
                     <Text style={[styles.remoteEmpty, { color: t0.muted }]}>{t('library.remote.empty')}</Text>
-                  ) : null}
+                  ) : undefined}
                   renderItem={({ item }) => (
                     <RemoteBookGridItem
                       book={item}
