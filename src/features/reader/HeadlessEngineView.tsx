@@ -21,8 +21,7 @@ const styles = StyleSheet.create({
 });
 
 export function HeadlessEngineView() {
-  // WebView<object>: react-native-webview 14's default P = undefined types props as never.
-  const ref = useRef<WebView<object>>(null);
+  const ref = useRef<WebView>(null);
 
   useEffect(() => {
     registerHeadlessSender((raw) => ref.current?.postMessage(raw));
@@ -33,7 +32,7 @@ export function HeadlessEngineView() {
 
   return (
     <View style={styles.host}>
-      <WebView<object>
+      <WebView
         ref={ref}
         source={{ html: buildEngineHtml(), baseUrl: 'https://localhost/' }}
         originWhitelist={['*']}
